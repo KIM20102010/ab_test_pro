@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: ab-test-pro
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: sh -c "python webhook_v2.py & streamlit run app_v2.py --server.port=10000 --server.address=0.0.0.0"
+    envVars:
+      - key: SUPABASE_URL
+        value: YOUR_SUPABASE_URL
+      - key: SUPABASE_ANON_KEY
+        value: YOUR_SUPABASE_ANON_KEY
+      - key: CREEM_WEBHOOK_SECRET
+        value: YOUR_CREEM_WEBHOOK_SECRET
+      - key: CREEM_PAYMENT_LINK_SINGLE
+        value: YOUR_CREEM_PAYMENT_LINK_SINGLE
+      - key: CREEM_PAYMENT_LINK_STARTER
+        value: YOUR_CREEM_PAYMENT_LINK_STARTER
+      - key: CREEM_PAYMENT_LINK_FOUNDER
+        value: YOUR_CREEM_PAYMENT_LINK_FOUNDER
