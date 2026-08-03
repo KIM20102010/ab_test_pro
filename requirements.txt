@@ -1,10 +1,13 @@
-streamlit==1.28.1
-pandas==2.1.0
-numpy==1.24.3
-scipy==1.11.2
-matplotlib==3.7.2
-Pillow==10.0.0
-Flask==2.3.2
-requests==2.31.0
-supabase==2.3.0
-python-dotenv==1.0.0
+--only-binary :all:
+setuptools>=65.0.0
+wheel>=0.40.0
+streamlit>=1.28.0,<1.30.0
+pandas==1.5.3
+numpy>=1.24.0,<1.25.0
+scipy>=1.10.0,<1.11.0
+matplotlib>=3.7.0,<3.8.0
+Pillow>=10.0.0,<11.0.0
+Flask>=2.3.0,<2.4.0
+requests>=2.31.0,<2.32.0
+supabase>=2.3.0,<2.4.0
+python-dotenv>=1.0.0,<1.1.0
