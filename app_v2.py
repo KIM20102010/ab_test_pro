@@ -486,9 +486,9 @@ def display_results(result):
         st.markdown("---")
         st.subheader("📄 Report Export")
         
-           if st.session_state.unlocked or st.session_state.user_plan != 'free':
+    if st.session_state.unlocked or st.session_state.user_plan != 'free':
         # 付费用户：可下载
-        if st.button("📥 Generate PDF Report", type="primary"):
+    if st.button("📥 Generate PDF Report", type="primary"):
             pdf_data = generate_pdf_report(result)
             st.download_button(
                 label="⬇️ Download PDF",
