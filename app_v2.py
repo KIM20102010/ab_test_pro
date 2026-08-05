@@ -483,27 +483,27 @@ def display_results(result):
             st.dataframe(result['df_clean'], use_container_width=True)
         
         # PDF下载 - 灰显锁定逻辑
-        st.markdown("---")
+                st.markdown("---")
         st.subheader("📄 Report Export")
         
-           if st.session_state.unlocked or st.session_state.user_plan != 'free':
-        # 付费用户：可下载
-        if st.button("📥 Generate PDF Report", type="primary"):
-            pdf_data = generate_pdf_report(result)
-            st.download_button(
-                label="⬇️ Download PDF",
-                data=pdf_data,
-                file_name=f"ABTest_{st.session_state.uploaded_file_name.replace('.csv','')}_{datetime.now().strftime('%Y%m%d')}.pdf",
-                mime="application/pdf"
+        if st.session_state.unlocked or st.session_state.user_plan != 'free':
+            # 付费用户：可下载
+            if st.button("📥 Generate PDF Report", type="primary"):
+                pdf_data = generate_pdf_report(result)
+                st.download_button(
+                    label="⬇️ Download PDF",
+                    data=pdf_data,
+                    file_name=f"ABTest_{st.session_state.uploaded_file_name.replace('.csv','')}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf"
+                )
+        else:
+            # 免费用户：灰显锁定，使用 st.button
+            st.button(
+                label="🔒 Upgrade to Unlock PDF Report",
+                disabled=True,
+                help="Upgrade to Starter ($199/yr) or Founder ($399/yr) to download reports."
             )
-    else:
-        # 免费用户：灰显锁定，使用 st.button 避免 missing data 错误
-        st.button(
-            label="🔒 Upgrade to Unlock PDF Report",
-            disabled=True,
-            help="Upgrade to Starter ($199/yr) or Founder ($399/yr) to download reports."
-        )
-        st.caption("💡 Free users can preview all metrics and charts. Upgrade to download PDF reports with your logo.")
+            st.caption("💡 Free users can preview all metrics and charts. Upgrade to download PDF reports with your logo.")
 def calc_power_curve(effect, alpha, n1, n2):
     df_t = n1 + n2 - 2
     ncp = effect * np.sqrt((n1 * n2) / (n1 + n2))
