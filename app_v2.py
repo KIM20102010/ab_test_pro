@@ -483,7 +483,7 @@ def display_results(result):
             st.dataframe(result['df_clean'], use_container_width=True)
         
         # PDF下载 - 灰显锁定逻辑
-                st.markdown("---")
+        st.markdown("---")
         st.subheader("📄 Report Export")
         
         if st.session_state.unlocked or st.session_state.user_plan != 'free':
