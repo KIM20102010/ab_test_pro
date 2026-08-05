@@ -514,63 +514,85 @@ def calc_power_curve(effect, alpha, n1, n2):
 # ========== PDF生成函数 ==========
 def generate_pdf_report(result):
     buffer = io.BytesIO()
+    
+    # 计算业务指标
+    lift = (result['m_t'] - result['m_c']) / abs(result['m_c']) if result['m_c'] != 0 else 0
+    is_significant = result['p_val'] < 0.05
+    is_powered = result['current_power'] > 0.8
+    
+    # 生成落地建议（直接、明确、可执行）
+    if is_significant and is_powered:
+        recommendation = "✅ Rollout to 100% — treatment shows statistically significant and practically meaningful lift."
+    elif is_significant and not is_powered:
+        recommendation = "⚠️ Increase sample size — significant but underpowered, need more data for confident decision."
+    else:
+        recommendation = "❌ Stop or iterate — no significant difference detected with sufficient power."
+    
     with pdf_backend.PdfPages(buffer, 'wb') as pdf:
-        # 第一页：报告摘要
         fig1 = plt.figure(figsize=(8.5, 11))
         
-        # Logo
+        # --- Logo ---
         if st.session_state.logo_img:
             logo_arr = np.array(st.session_state.logo_img.resize((120, 40)))
             fig1.figimage(logo_arr, xo=50, yo=750, origin='upper')
         
-        plt.text(0.1, 0.92, "A/B TEST ANALYSIS REPORT", fontsize=18, weight='bold')
-        plt.text(0.1, 0.87, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", fontsize=10)
-        plt.text(0.1, 0.82, f"Control (N={result['n_c']}): Mean={result['m_c']:.3f}, Std={result['s_c']:.3f}", fontsize=10)
-        plt.text(0.1, 0.78, f"Treatment (N={result['n_t']}): Mean={result['m_t']:.3f}, Std={result['s_t']:.3f}", fontsize=10)
-        plt.text(0.1, 0.72, f"Difference: {result['m_t']-result['m_c']:.3f} [95% CI: {result['ci_low']:.3f}, {result['ci_high']:.3f}]", fontsize=10)
-        plt.text(0.1, 0.68, f"P-Value: {result['p_val']:.5f} | Cohen's d: {result['cohen_d']:.3f} ({result['effect_label']})", fontsize=10)
-        plt.text(0.1, 0.64, f"Statistical Power: {result['current_power']:.1%} | MDE: {result['mde']:.3f}", fontsize=10)
-        plt.text(0.1, 0.58, f"Conclusion: {result['verdict'].replace('**','')}", fontsize=10)
+        # --- 标题 + 元数据（精简版）---
+        plt.text(0.1, 0.95, "A/B TEST ANALYSIS REPORT", fontsize=18, weight='bold')
+        plt.text(0.1, 0.91, f"Project: {st.session_state.uploaded_file_name or 'Untitled'}", fontsize=10, color='#333333')
+        plt.text(0.1, 0.88, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", fontsize=9, color='gray')
         
-        # 免责声明
-        disclaimer = "DISCLAIMER: This report is for informational purposes only. Not financial or investment advice. All data processed locally; no data transmitted or stored."
-        wrapped = '\n'.join(textwrap.wrap(disclaimer, width=80))
-        plt.text(0.1, 0.05, wrapped, fontsize=8, color='gray')
+        # --- 管理层摘要（最核心）---
+        summary = f"Treatment outperforms Control by {lift*100:.1f}% (p={result['p_val']:.4f}, Power={result['current_power']:.1%})"
+        summary_color = '#2E7D32' if is_significant and is_powered else '#C62828'
+        plt.text(0.1, 0.82, "EXECUTIVE SUMMARY", fontsize=12, weight='bold', color='#1a3b5c')
+        plt.text(0.1, 0.78, summary, fontsize=14, weight='bold', color=summary_color)
         
-        # 品牌水印（免费版）
-        if st.session_state.user_plan == 'free':
-            plt.text(0.5, 0.5, "DEMO VERSION", fontsize=30, color='red', alpha=0.15,
-                     transform=plt.gca().transAxes, rotation=45, ha='center', va='center')
+        # --- 关键统计指标（紧凑、关键）---
+        plt.text(0.1, 0.70, "KEY METRICS", fontsize=11, weight='bold')
+        plt.text(0.1, 0.66, f"Difference: {result['m_t']-result['m_c']:.4f}  |  95% CI: [{result['ci_low']:.4f}, {result['ci_high']:.4f}]", fontsize=11)
+        plt.text(0.1, 0.63, f"P-Value: {result['p_val']:.5f}  |  Cohen's d: {result['cohen_d']:.3f} ({result['effect_label']})", fontsize=11)
+        plt.text(0.1, 0.60, f"Statistical Power: {result['current_power']:.1%}  |  MDE: {result['mde']:.3f}", fontsize=11)
+        
+        # --- 样本量建议（新增）---
+        if result['current_power'] < 0.8:
+            plt.text(0.1, 0.55, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (result['cohen_d']**2))} samples per group for 80% power.", fontsize=10, color='#C62828')
+        
+        # --- 落地建议（明确决策）---
+        plt.text(0.1, 0.48, "RECOMMENDED ACTION", fontsize=11, weight='bold', color='#1a3b5c')
+        plt.text(0.1, 0.44, recommendation, fontsize=12, weight='bold', color='#1a3b5c')
+        
+        # --- 页脚（精简版）---
+        plt.text(0.1, 0.06, "Confidential — for internal use only", fontsize=8, color='gray')
+        plt.text(0.85, 0.06, "Page 1", fontsize=8, color='gray')
         
         plt.axis('off')
         pdf.savefig(fig1)
         plt.close(fig1)
         
-        # 第二页：图表
+        # ========== 第二页：图表（增加均值标注） ==========
         fig2, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
         control_data = result['control_data']
         treatment_data = result['treatment_data']
+        
+        # 箱线图 + 均值点标注
         bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
         for patch, color in zip(bp['boxes'], ['#2E86AB', '#A23B72']):
             patch.set_facecolor(color)
+        # 标注均值点
+        ax1.scatter(1, result['m_c'], color='white', s=80, zorder=5, label=f"Mean: {result['m_c']:.3f}")
+        ax1.scatter(2, result['m_t'], color='white', s=80, zorder=5, label=f"Mean: {result['m_t']:.3f}")
+        ax1.legend(loc='upper left')
         ax1.grid(True, alpha=0.3)
+        
+        # 直方图
         ax2.hist(control_data, bins=15, alpha=0.6, label='Control', color='#2E86AB')
         ax2.hist(treatment_data, bins=15, alpha=0.6, label='Treatment', color='#A23B72')
         ax2.legend()
         ax2.grid(True, alpha=0.3)
+        
+        plt.text(0.85, 0.02, "Page 2", fontsize=8, color='gray', transform=fig2.transFigure)
         pdf.savefig(fig2)
         plt.close(fig2)
-        
-        # 第三页：功效曲线
-        fig3, ax3 = plt.subplots(figsize=(8, 4))
-        sample_sizes = np.arange(5, 201, 5)
-        powers = [calc_power_curve(result['cohen_d'], result['alpha'], n, n) for n in sample_sizes]
-        ax3.plot(sample_sizes, powers, 'b-', linewidth=2)
-        ax3.axhline(0.8, color='red', linestyle='--', alpha=0.7)
-        ax3.set_xlabel("Sample Size (per group)"); ax3.set_ylabel("Power")
-        ax3.grid(True, alpha=0.3)
-        pdf.savefig(fig3)
-        plt.close(fig3)
     
     buffer.seek(0)
     return buffer.getvalue()
