@@ -496,15 +496,14 @@ def display_results(result):
                     file_name=f"ABTest_{st.session_state.uploaded_file_name.replace('.csv','')}_{datetime.now().strftime('%Y%m%d')}.pdf",
                     mime="application/pdf"
                 )
-        else:
-            # 免费用户：灰显锁定
-            st.download_button(
-                label="🔒 Upgrade to Unlock PDF Report",
-                disabled=True,
-                help="Upgrade to Starter ($199/yr) or Founder ($399/yr) to download reports."
-            )
-            st.caption("💡 Free users can preview all metrics and charts. Upgrade to download PDF reports with your logo.")
-
+       else:
+    # 免费用户：灰显锁定
+    st.button(
+        label="🔒 Upgrade to Unlock PDF Report",
+        disabled=True,
+        help="Upgrade to Starter ($199/yr) or Founder ($399/yr) to download reports."
+    )
+    st.caption("💡 Free users can preview all metrics and charts. Upgrade to download PDF reports with your logo.")
 def calc_power_curve(effect, alpha, n1, n2):
     df_t = n1 + n2 - 2
     ncp = effect * np.sqrt((n1 * n2) / (n1 + n2))
