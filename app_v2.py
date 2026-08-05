@@ -493,11 +493,11 @@ def display_results(result):
         if st.session_state.unlocked or st.session_state.user_plan != 'free':
             # 付费用户：可下载
             if st.button("📥 Generate PDF Report", type="primary"):
-                pdf_data = generate_pdf_report(result)
+                pdf_data, report_id = generate_pdf_report(result)
                 st.download_button(
                     label="⬇️ Download PDF",
                     data=pdf_data,
-                    file_name=f"ABTest_{st.session_state.uploaded_file_name.replace('.csv','')}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                    file_name=f"ABTest_{st.session_state.uploaded_file_name.replace('.csv','')}_{report_id}_{datetime.now().strftime('%Y%m%d')}.pdf",
                     mime="application/pdf"
                 )
         else:
