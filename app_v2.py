@@ -497,7 +497,7 @@ def display_results(result):
                     mime="application/pdf"
                 )
        else:
-    # 免费用户：灰显锁定
+    # 免费用户：灰显锁定，使用 st.button 避免 missing data 错误
     st.button(
         label="🔒 Upgrade to Unlock PDF Report",
         disabled=True,
