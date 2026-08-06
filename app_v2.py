@@ -563,7 +563,7 @@ def generate_pdf_report(result):
                 # 坐标使用 figure fraction，box_alignment=(0,1) 表示左下角对齐，y=1表示顶端
                 ab = AnnotationBbox(
                     img_box,
-                    xy=(0.12, 0.86),          # 标题左上角位置
+                    xy=(0.12, 0.90),          # 标题左上角位置
                     xycoords='figure fraction',
                     box_alignment=(0, 1),      # 左对齐，底部对齐
                     frameon=False
