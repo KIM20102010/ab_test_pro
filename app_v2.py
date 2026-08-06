@@ -519,7 +519,7 @@ def calc_power_curve(effect, alpha, n1, n2):
 def generate_pdf_report(result):
     buffer = io.BytesIO()
     
-    # 生成报告ID（格式：RPT-YYYYMMDD-XXXX）
+    # 生成报告ID
     st.session_state.report_counter += 1
     report_id = f"RPT-{datetime.now().strftime('%Y%m%d')}-{st.session_state.report_counter:04d}"
     
@@ -536,49 +536,49 @@ def generate_pdf_report(result):
     else:
         recommendation = "❌ Stop or iterate — no significant difference detected with sufficient power."
     
-    # 获取项目名
     project_name = st.session_state.uploaded_file_name or 'Untitled'
-    
-    # 总页数（固定为4页：封面、箱线图+直方图、数据表格、功效曲线）
     total_pages = 4
     
     with pdf_backend.PdfPages(buffer, 'wb') as pdf:
         # ========== 第一页：封面 ==========
         fig1 = plt.figure(figsize=(8.5, 11))
         
-        # Logo（左上角）
+        # --- Logo（左上角，确保与文字不重叠）---
         if st.session_state.logo_img:
             logo_arr = np.array(st.session_state.logo_img.resize((120, 40)))
-            fig1.figimage(logo_arr, xo=50, yo=730, origin='upper')
+            # 放在左上角 (xo=50, yo=760) 留出顶部空间
+            fig1.figimage(logo_arr, xo=50, yo=780, origin='upper')
         
-        # 标题 + 报告ID + 元数据
+        # --- 标题与元数据（全部左对齐，x=0.15，从上往下排列）---
+        # 注意：由于Logo占用顶部空间，文字从 y=0.88 开始（而不是0.92）
         plt.text(0.15, 0.92, "A/B TEST ANALYSIS REPORT", fontsize=18, weight='bold')
         plt.text(0.15, 0.87, f"Report ID: {report_id}", fontsize=10, color='gray')
         plt.text(0.15, 0.83, f"Project: {project_name}", fontsize=11)
         plt.text(0.15, 0.79, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", fontsize=9, color='gray')
         
-        # 执行摘要
+        # --- 执行摘要（拆成两行，间距拉开）---
         plt.text(0.15, 0.72, "EXECUTIVE SUMMARY", fontsize=13, weight='bold', color='#1a3b5c')
-        summary_text = f"Treatment outperforms Control by {lift*100:.1f}% (p={result['p_val']:.4f}, Power={result['current_power']:.1%})"
+        summary_line1 = f"Treatment outperforms Control by {lift*100:.1f}%"
+        summary_line2 = f"(p={result['p_val']:.4f}, Power={result['current_power']:.1%})"
         summary_color = '#2E7D32' if is_significant and is_powered else '#C62828'
-        plt.text(0.15, 0.71, f"Treatment outperforms Control by {lift*100:.1f}%", fontsize=14, weight='bold', color=summary_color)
-        plt.text(0.15, 0.67, f"(p={result['p_val']:.4f}, Power={result['current_power']:.1%})", fontsize=12, color=summary_color)
+        plt.text(0.15, 0.67, summary_line1, fontsize=14, weight='bold', color=summary_color)
+        plt.text(0.15, 0.63, summary_line2, fontsize=12, color=summary_color)  # 第二行字体稍小
         
-        # 关键指标
-        plt.text(0.15, 0.59, "KEY METRICS", fontsize=13, weight='bold', color='#1a3b5c')
-        plt.text(0.15, 0.54, f"Difference: {result['m_t']-result['m_c']:.4f}  |  95% CI: [{result['ci_low']:.4f}, {result['ci_high']:.4f}]", fontsize=11)
-        plt.text(0.15, 0.50, f"P-Value: {result['p_val']:.5f}  |  Cohen's d: {result['cohen_d']:.3f} ({result['effect_label']})", fontsize=11)
-        plt.text(0.15, 0.46, f"Statistical Power: {result['current_power']:.1%}  |  MDE: {result['mde']:.3f}", fontsize=11)
+        # --- 关键指标（间距适当）---
+        plt.text(0.15, 0.55, "KEY METRICS", fontsize=13, weight='bold', color='#1a3b5c')
+        plt.text(0.15, 0.50, f"Difference: {result['m_t']-result['m_c']:.4f}  |  95% CI: [{result['ci_low']:.4f}, {result['ci_high']:.4f}]", fontsize=11)
+        plt.text(0.15, 0.46, f"P-Value: {result['p_val']:.5f}  |  Cohen's d: {result['cohen_d']:.3f} ({result['effect_label']})", fontsize=11)
+        plt.text(0.15, 0.42, f"Statistical Power: {result['current_power']:.1%}  |  MDE: {result['mde']:.3f}", fontsize=11)
         
-        # 样本量建议
+        # --- 样本量建议（如果功率不足）---
         if result['current_power'] < 0.8:
-            plt.text(0.15, 0.40, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (result['cohen_d']**2))} samples per group for 80% power.", fontsize=10, color='#C62828')
+            plt.text(0.15, 0.36, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (result['cohen_d']**2))} samples per group for 80% power.", fontsize=10, color='#C62828')
         
-        # 落地建议
-        plt.text(0.15, 0.32, "RECOMMENDED ACTION", fontsize=13, weight='bold', color='#1a3b5c')
-        plt.text(0.15, 0.27, recommendation, fontsize=11, weight='bold', color='#1a3b5c')
+        # --- 落地建议 ---
+        plt.text(0.15, 0.28, "RECOMMENDED ACTION", fontsize=13, weight='bold', color='#1a3b5c')
+        plt.text(0.15, 0.23, recommendation, fontsize=11, weight='bold', color='#1a3b5c')
         
-        # 页脚
+        # --- 页脚 ---
         plt.text(0.15, 0.06, "Confidential — for internal use only", fontsize=8, color='gray')
         plt.text(0.85, 0.06, f"Page 1 of {total_pages}", fontsize=8, color='gray')
         
@@ -606,12 +606,11 @@ def generate_pdf_report(result):
         ax2.legend()
         ax2.grid(True, alpha=0.3)
         
-        # 页码
         plt.text(0.85, 0.02, f"Page 2 of {total_pages}", fontsize=8, color='gray', transform=fig2.transFigure)
         pdf.savefig(fig2)
         plt.close(fig2)
         
-        # ========== 第三页：数据表格（描述统计） ==========
+        # ========== 第三页：数据表格 ==========
         fig3, ax3 = plt.subplots(figsize=(8.5, 11))
         ax3.axis('off')
         
@@ -660,7 +659,7 @@ def generate_pdf_report(result):
         table.set_fontsize(10)
         table.scale(1, 1.5)
         
-        # 设置表头样式
+        # 样式
         for (i, j), cell in table.get_celld().items():
             if i == 0:
                 cell.set_facecolor('#1a3b5c')
@@ -668,7 +667,6 @@ def generate_pdf_report(result):
             else:
                 cell.set_facecolor('#f5f5f5' if i % 2 == 0 else 'white')
         
-        # 页脚
         plt.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=8, color='gray', transform=fig3.transFigure)
         pdf.savefig(fig3)
         plt.close(fig3)
@@ -685,13 +683,11 @@ def generate_pdf_report(result):
         ax4.legend()
         ax4.grid(True, alpha=0.3)
         
-        # 页码
         plt.text(0.85, 0.02, f"Page 4 of {total_pages}", fontsize=8, color='gray', transform=fig4.transFigure)
         pdf.savefig(fig4)
         plt.close(fig4)
     
     buffer.seek(0)
-    # 存储报告ID到session_state，以便下载文件名使用
     st.session_state.last_report_id = report_id
     return buffer.getvalue(), report_id
 # ========== 主逻辑 ==========
