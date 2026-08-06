@@ -539,46 +539,49 @@ def generate_pdf_report(result):
     project_name = st.session_state.uploaded_file_name or 'Untitled'
     total_pages = 4
     
+    # 定义页眉通用内容
+    header_text = f"A/B TEST ANALYSIS REPORT  |  Report ID: {report_id}  |  Confidential"
+    
     with pdf_backend.PdfPages(buffer, 'wb') as pdf:
         # ========== 第一页：封面 ==========
         fig1 = plt.figure(figsize=(8.5, 11))
         
-        # --- Logo（左上角，确保与文字不重叠）---
+        # --- Logo（主标题左上方，宽度约12%）---
         if st.session_state.logo_img:
-            logo_arr = np.array(st.session_state.logo_img.resize((120, 40)))
-            # 放在左上角 (xo=50, yo=760) 留出顶部空间
-            fig1.figimage(logo_arr, xo=50, yo=780, origin='upper')
+            # 调整为 100x35，确保宽度占比约12%
+            logo_arr = np.array(st.session_state.logo_img.resize((100, 35)))
+            # 放置在 x=60, y=720，远离主标题
+            fig1.figimage(logo_arr, xo=60, yo=730, origin='upper')
         
-        # --- 标题与元数据（全部左对齐，x=0.15，从上往下排列）---
-        # 注意：由于Logo占用顶部空间，文字从 y=0.88 开始（而不是0.92）
-        plt.text(0.15, 0.92, "A/B TEST ANALYSIS REPORT", fontsize=18, weight='bold')
-        plt.text(0.15, 0.87, f"Report ID: {report_id}", fontsize=10, color='gray')
-        plt.text(0.15, 0.83, f"Project: {project_name}", fontsize=11)
-        plt.text(0.15, 0.79, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", fontsize=9, color='gray')
+        # --- 主标题（Logo 下方留出充足空白）---
+        plt.text(0.15, 0.88, "A/B TEST ANALYSIS REPORT", fontsize=20, weight='bold')
+        plt.text(0.15, 0.83, f"Report ID: {report_id}", fontsize=10, color='gray')
+        plt.text(0.15, 0.79, f"Project: {project_name}", fontsize=11)
+        plt.text(0.15, 0.75, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", fontsize=9, color='gray')
         
         # --- 执行摘要（拆成两行，间距拉开）---
-        plt.text(0.15, 0.72, "EXECUTIVE SUMMARY", fontsize=13, weight='bold', color='#1a3b5c')
+        plt.text(0.15, 0.67, "EXECUTIVE SUMMARY", fontsize=13, weight='bold', color='#1a3b5c')
         summary_line1 = f"Treatment outperforms Control by {lift*100:.1f}%"
         summary_line2 = f"(p={result['p_val']:.4f}, Power={result['current_power']:.1%})"
         summary_color = '#2E7D32' if is_significant and is_powered else '#C62828'
-        plt.text(0.15, 0.67, summary_line1, fontsize=14, weight='bold', color=summary_color)
-        plt.text(0.15, 0.63, summary_line2, fontsize=12, color=summary_color)  # 第二行字体稍小
+        plt.text(0.15, 0.62, summary_line1, fontsize=14, weight='bold', color=summary_color)
+        plt.text(0.15, 0.58, summary_line2, fontsize=12, color=summary_color)
         
-        # --- 关键指标（间距适当）---
-        plt.text(0.15, 0.55, "KEY METRICS", fontsize=13, weight='bold', color='#1a3b5c')
-        plt.text(0.15, 0.50, f"Difference: {result['m_t']-result['m_c']:.4f}  |  95% CI: [{result['ci_low']:.4f}, {result['ci_high']:.4f}]", fontsize=11)
-        plt.text(0.15, 0.46, f"P-Value: {result['p_val']:.5f}  |  Cohen's d: {result['cohen_d']:.3f} ({result['effect_label']})", fontsize=11)
-        plt.text(0.15, 0.42, f"Statistical Power: {result['current_power']:.1%}  |  MDE: {result['mde']:.3f}", fontsize=11)
+        # --- 关键指标 ---
+        plt.text(0.15, 0.50, "KEY METRICS", fontsize=13, weight='bold', color='#1a3b5c')
+        plt.text(0.15, 0.45, f"Difference: {result['m_t']-result['m_c']:.4f}  |  95% CI: [{result['ci_low']:.4f}, {result['ci_high']:.4f}]", fontsize=11)
+        plt.text(0.15, 0.41, f"P-Value: {result['p_val']:.5f}  |  Cohen's d: {result['cohen_d']:.3f} ({result['effect_label']})", fontsize=11)
+        plt.text(0.15, 0.37, f"Statistical Power: {result['current_power']:.1%}  |  MDE: {result['mde']:.3f}", fontsize=11)
         
-        # --- 样本量建议（如果功率不足）---
+        # --- 样本量建议 ---
         if result['current_power'] < 0.8:
-            plt.text(0.15, 0.36, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (result['cohen_d']**2))} samples per group for 80% power.", fontsize=10, color='#C62828')
+            plt.text(0.15, 0.31, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (result['cohen_d']**2))} samples per group for 80% power.", fontsize=10, color='#C62828')
         
         # --- 落地建议 ---
-        plt.text(0.15, 0.28, "RECOMMENDED ACTION", fontsize=13, weight='bold', color='#1a3b5c')
-        plt.text(0.15, 0.23, recommendation, fontsize=11, weight='bold', color='#1a3b5c')
+        plt.text(0.15, 0.23, "RECOMMENDED ACTION", fontsize=13, weight='bold', color='#1a3b5c')
+        plt.text(0.15, 0.18, recommendation, fontsize=11, weight='bold', color='#1a3b5c')
         
-        # --- 页脚 ---
+        # --- 页脚（包含页眉时，页脚可简化）---
         plt.text(0.15, 0.06, "Confidential — for internal use only", fontsize=8, color='gray')
         plt.text(0.85, 0.06, f"Page 1 of {total_pages}", fontsize=8, color='gray')
         
@@ -590,6 +593,9 @@ def generate_pdf_report(result):
         fig2, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
         control_data = result['control_data']
         treatment_data = result['treatment_data']
+        
+        # --- 添加统一页眉（第二页）---
+        fig2.text(0.05, 0.95, header_text, fontsize=8, color='gray')
         
         # 箱线图 + 均值标注
         bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
@@ -606,6 +612,7 @@ def generate_pdf_report(result):
         ax2.legend()
         ax2.grid(True, alpha=0.3)
         
+        # 页码
         plt.text(0.85, 0.02, f"Page 2 of {total_pages}", fontsize=8, color='gray', transform=fig2.transFigure)
         pdf.savefig(fig2)
         plt.close(fig2)
@@ -613,6 +620,9 @@ def generate_pdf_report(result):
         # ========== 第三页：数据表格 ==========
         fig3, ax3 = plt.subplots(figsize=(8.5, 11))
         ax3.axis('off')
+        
+        # --- 添加统一页眉（第三页）---
+        fig3.text(0.05, 0.95, header_text, fontsize=8, color='gray')
         
         # 计算描述统计
         stats_control = {
@@ -637,8 +647,8 @@ def generate_pdf_report(result):
         }
         
         # 表格标题
-        plt.text(0.15, 0.95, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c')
-        plt.text(0.15, 0.90, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=9, color='gray')
+        plt.text(0.15, 0.90, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c')
+        plt.text(0.15, 0.86, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=9, color='gray')
         
         # 构建表格数据
         table_data = [
@@ -659,7 +669,6 @@ def generate_pdf_report(result):
         table.set_fontsize(10)
         table.scale(1, 1.5)
         
-        # 样式
         for (i, j), cell in table.get_celld().items():
             if i == 0:
                 cell.set_facecolor('#1a3b5c')
@@ -667,12 +676,17 @@ def generate_pdf_report(result):
             else:
                 cell.set_facecolor('#f5f5f5' if i % 2 == 0 else 'white')
         
+        # 页码
         plt.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=8, color='gray', transform=fig3.transFigure)
         pdf.savefig(fig3)
         plt.close(fig3)
         
         # ========== 第四页：功效曲线 ==========
         fig4, ax4 = plt.subplots(figsize=(8, 4))
+        
+        # --- 添加统一页眉（第四页）---
+        fig4.text(0.05, 0.95, header_text, fontsize=8, color='gray')
+        
         sample_sizes = np.arange(5, 201, 5)
         powers = [calc_power_curve(result['cohen_d'], result['alpha'], n, n) for n in sample_sizes]
         ax4.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
