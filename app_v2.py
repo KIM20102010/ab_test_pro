@@ -573,7 +573,7 @@ def generate_pdf_report(result):
                 img_box = OffsetImage(logo_resized, zoom=1)
                 ab = AnnotationBbox(
                     img_box,
-                    xy=(0.12, 0.92),          # 标题左上方
+                    xy=(0.12, 0.96),          # 标题左上方
                     xycoords='figure fraction',
                     box_alignment=(0, 1),      # 左对齐，底部对齐
                     frameon=False
@@ -685,7 +685,7 @@ def generate_pdf_report(result):
             ['Max', f"{stats_control['Max']:.4f}", f"{stats_treatment['Max']:.4f}"],
         ]
         
-        table = ax3.table(cellText=table_data, loc='center', cellLoc='center', colWidths=[0.2, 0.3, 0.3])
+        table = ax3.table(cellText=table_data, loc='upper center', cellLoc='center', colWidths=[0.2, 0.3, 0.3], bbox=[0.15, 0.45, 0.7, 0.35])
         table.auto_set_font_size(False)
         table.set_fontsize(10)
         table.scale(1, 1.5)
