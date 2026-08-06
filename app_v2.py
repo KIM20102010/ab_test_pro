@@ -556,10 +556,10 @@ def generate_pdf_report(result):
         if st.session_state.logo_img:
             logo_arr = np.array(st.session_state.logo_img.resize((100, 35)))
         # Logo底部与主标题顶部保持留白，左边缘与主标题左边缘对齐
-            fig1.figimage(logo_arr, xo=85, yo=755, origin='upper')  # xo=85 对应 x=0.12 位置
+            fig1.figimage(logo_arr, xo=85, yo=820, origin='upper')  # xo=85 对应 x=0.12 位置
         
         # --- 主标题（左对齐，x=0.12）---
-        plt.text(0.12, 0.88, "A/B TEST ANALYSIS REPORT", fontsize=20, weight='bold')
+        plt.text(0.12, 0.78, "A/B TEST ANALYSIS REPORT", fontsize=20, weight='bold')
         plt.text(0.12, 0.83, f"Report ID: {report_id}", fontsize=10, color='gray')
         plt.text(0.12, 0.79, f"Project: {project_name}", fontsize=11)
         plt.text(0.12, 0.75, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", fontsize=9, color='gray')
