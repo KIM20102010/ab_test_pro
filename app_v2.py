@@ -556,14 +556,24 @@ def generate_pdf_report(result):
         # --- Logo（使用 AnnotationBbox 精确定位）---
         if st.session_state.logo_img:
             try:
-                # 缩放 Logo 至合适尺寸（宽度约 100 像素）
-                logo_resized = st.session_state.logo_img.resize((120, 45))
+                # 获取原始尺寸
+                orig_width, orig_height = st.session_state.logo_img.size
+        
+                # 设置最大显示尺寸（单位：像素）
+                max_width = 150
+                max_height = 60
+        
+                # 计算缩放比例，保持宽高比，且只缩小不放大
+                ratio = min(max_width / orig_width, max_height / orig_height, 1.0)
+                new_width = int(orig_width * ratio)
+                new_height = int(orig_height * ratio)
+        
+                # 使用高质量滤镜缩放
+                logo_resized = st.session_state.logo_img.resize((new_width, new_height), Image.LANCZOS)
                 img_box = OffsetImage(logo_resized, zoom=1)
-                # 放置 Logo：与标题左边缘对齐（x=0.12），放在标题上方（y=0.88）
-                # 坐标使用 figure fraction，box_alignment=(0,1) 表示左下角对齐，y=1表示顶端
                 ab = AnnotationBbox(
                     img_box,
-                    xy=(0.12, 0.90),          # 标题左上角位置
+                    xy=(0.12, 0.92),          # 标题左上方
                     xycoords='figure fraction',
                     box_alignment=(0, 1),      # 左对齐，底部对齐
                     frameon=False
