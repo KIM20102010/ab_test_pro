@@ -15,6 +15,7 @@ import textwrap
 from supabase import create_client, Client
 import tempfile
 import hashlib
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
 # 报告ID计数器（用于生成唯一报告编号）
 if "report_counter" not in st.session_state:
@@ -549,47 +550,60 @@ def generate_pdf_report(result):
         # ========== 第一页：封面 ==========
         fig1 = plt.figure(figsize=(8.5, 11))
         
-        # --- 页眉（第一页也添加）---
-        fig1.text(0.05, 0.97, header_text, fontsize=8, color='gray')
+        # --- 页眉（第一页）---
+        fig1.text(0.05, 0.97, header_text, fontsize=9, color='gray')
         
-        # --- Logo（主标题左上方）---
+        # --- Logo（使用 AnnotationBbox 精确定位）---
         if st.session_state.logo_img:
-            logo_arr = np.array(st.session_state.logo_img.resize((100, 35)))
-        # Logo底部与主标题顶部保持留白，左边缘与主标题左边缘对齐
-            fig1.figimage(logo_arr, xo=85, yo=820, origin='upper')  # xo=85 对应 x=0.12 位置
+            try:
+                # 缩放 Logo 至合适尺寸（宽度约 100 像素）
+                logo_resized = st.session_state.logo_img.resize((120, 45))
+                img_box = OffsetImage(logo_resized, zoom=1)
+                # 放置 Logo：与标题左边缘对齐（x=0.12），放在标题上方（y=0.88）
+                # 坐标使用 figure fraction，box_alignment=(0,1) 表示左下角对齐，y=1表示顶端
+                ab = AnnotationBbox(
+                    img_box,
+                    xy=(0.12, 0.86),          # 标题左上角位置
+                    xycoords='figure fraction',
+                    box_alignment=(0, 1),      # 左对齐，底部对齐
+                    frameon=False
+                )
+                fig1.add_artist(ab)
+            except Exception as e:
+                print(f"Logo 加载失败: {e}")
         
-        # --- 主标题（左对齐，x=0.12）---
-        plt.text(0.12, 0.78, "A/B TEST ANALYSIS REPORT", fontsize=20, weight='bold')
-        plt.text(0.12, 0.83, f"Report ID: {report_id}", fontsize=10, color='gray')
-        plt.text(0.12, 0.79, f"Project: {project_name}", fontsize=11)
-        plt.text(0.12, 0.75, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", fontsize=9, color='gray')
+        # --- 主标题（下移，为 Logo 留出空间）---
+        plt.text(0.12, 0.82, "A/B TEST ANALYSIS REPORT", fontsize=22, weight='bold', transform=fig1.transFigure)
+        plt.text(0.12, 0.77, f"Report ID: {report_id}", fontsize=12, color='gray', transform=fig1.transFigure)
+        plt.text(0.12, 0.73, f"Project: {project_name}", fontsize=13, transform=fig1.transFigure)
+        plt.text(0.12, 0.69, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", fontsize=11, color='gray', transform=fig1.transFigure)
         
         # --- 执行摘要 ---
-        plt.text(0.12, 0.67, "EXECUTIVE SUMMARY", fontsize=13, weight='bold', color='#1a3b5c')
+        plt.text(0.12, 0.62, "EXECUTIVE SUMMARY", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
         summary_line1 = f"Treatment outperforms Control by {lift*100:.1f}%"
         summary_line2 = f"(p={result['p_val']:.4f}, Power={result['current_power']:.1%})"
         summary_color = '#2E7D32' if is_significant and is_powered else '#C62828'
-        plt.text(0.12, 0.62, summary_line1, fontsize=14, weight='bold', color=summary_color)
-        plt.text(0.12, 0.58, summary_line2, fontsize=12, color=summary_color)
+        plt.text(0.12, 0.57, summary_line1, fontsize=16, weight='bold', color=summary_color, transform=fig1.transFigure)
+        plt.text(0.12, 0.53, summary_line2, fontsize=14, color=summary_color, transform=fig1.transFigure)
         
         # --- 关键指标 ---
-        plt.text(0.12, 0.50, "KEY METRICS", fontsize=13, weight='bold', color='#1a3b5c')
-        plt.text(0.12, 0.45, f"Difference: {result['m_t']-result['m_c']:.4f}  |  95% CI: [{result['ci_low']:.4f}, {result['ci_high']:.4f}]", fontsize=11)
-        plt.text(0.12, 0.41, f"P-Value: {result['p_val']:.5f}  |  Cohen's d: {result['cohen_d']:.3f} ({result['effect_label']})", fontsize=11)
-        plt.text(0.12, 0.37, f"Statistical Power: {result['current_power']:.1%}  |  MDE: {result['mde']:.3f}", fontsize=11)
+        plt.text(0.12, 0.45, "KEY METRICS", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+        plt.text(0.12, 0.40, f"Difference: {result['m_t']-result['m_c']:.4f}  |  95% CI: [{result['ci_low']:.4f}, {result['ci_high']:.4f}]", fontsize=13, transform=fig1.transFigure)
+        plt.text(0.12, 0.36, f"P-Value: {result['p_val']:.5f}  |  Cohen's d: {result['cohen_d']:.3f} ({result['effect_label']})", fontsize=13, transform=fig1.transFigure)
+        plt.text(0.12, 0.32, f"Statistical Power: {result['current_power']:.1%}  |  MDE: {result['mde']:.3f}", fontsize=13, transform=fig1.transFigure)
         
         # --- 样本量建议 ---
         if result['current_power'] < 0.8:
-            plt.text(0.12, 0.31, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (result['cohen_d']**2))} samples per group for 80% power.", fontsize=10, color='#C62828')
+            plt.text(0.12, 0.26, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (result['cohen_d']**2))} samples per group for 80% power.", fontsize=11, color='#C62828', transform=fig1.transFigure)
         
         # --- 落地建议（拆成两行）---
-        plt.text(0.12, 0.23, "RECOMMENDED ACTION", fontsize=13, weight='bold', color='#1a3b5c')
-        plt.text(0.12, 0.18, rec_line1, fontsize=11, weight='bold', color='#1a3b5c')
-        plt.text(0.12, 0.14, rec_line2, fontsize=11, weight='bold', color='#1a3b5c')
+        plt.text(0.12, 0.20, "RECOMMENDED ACTION", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+        plt.text(0.12, 0.16, rec_line1, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+        plt.text(0.12, 0.12, rec_line2, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
         
         # --- 页脚 ---
-        plt.text(0.12, 0.06, "Confidential — for internal use only", fontsize=8, color='gray')
-        plt.text(0.85, 0.06, f"Page 1 of {total_pages}", fontsize=8, color='gray')
+        plt.text(0.12, 0.06, "Confidential — for internal use only", fontsize=10, color='gray', transform=fig1.transFigure)
+        plt.text(0.85, 0.06, f"Page 1 of {total_pages}", fontsize=10, color='gray', transform=fig1.transFigure)
         
         plt.axis('off')
         pdf.savefig(fig1)
@@ -600,7 +614,7 @@ def generate_pdf_report(result):
         control_data = result['control_data']
         treatment_data = result['treatment_data']
         
-        fig2.text(0.05, 0.95, header_text, fontsize=8, color='gray')
+        fig2.text(0.05, 0.95, header_text, fontsize=9, color='gray')
         
         bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
         for patch, color in zip(bp['boxes'], ['#2E86AB', '#A23B72']):
@@ -615,7 +629,7 @@ def generate_pdf_report(result):
         ax2.legend()
         ax2.grid(True, alpha=0.3)
         
-        plt.text(0.85, 0.02, f"Page 2 of {total_pages}", fontsize=8, color='gray', transform=fig2.transFigure)
+        plt.text(0.85, 0.02, f"Page 2 of {total_pages}", fontsize=10, color='gray', transform=fig2.transFigure)
         pdf.savefig(fig2)
         plt.close(fig2)
         
@@ -623,7 +637,7 @@ def generate_pdf_report(result):
         fig3, ax3 = plt.subplots(figsize=(8.5, 11))
         ax3.axis('off')
         
-        fig3.text(0.05, 0.95, header_text, fontsize=8, color='gray')
+        fig3.text(0.05, 0.95, header_text, fontsize=9, color='gray')
         
         stats_control = {
             'N': len(control_data),
@@ -646,8 +660,8 @@ def generate_pdf_report(result):
             'Max': np.max(treatment_data)
         }
         
-        plt.text(0.15, 0.90, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c')
-        plt.text(0.15, 0.86, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=9, color='gray')
+        plt.text(0.15, 0.90, "DESCRIPTIVE STATISTICS", fontsize=15, weight='bold', color='#1a3b5c', transform=fig3.transFigure)
+        plt.text(0.15, 0.86, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=fig3.transFigure)
         
         table_data = [
             ['Metric', 'Control', 'Treatment'],
@@ -673,14 +687,14 @@ def generate_pdf_report(result):
             else:
                 cell.set_facecolor('#f5f5f5' if i % 2 == 0 else 'white')
         
-        plt.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=8, color='gray', transform=fig3.transFigure)
+        plt.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray', transform=fig3.transFigure)
         pdf.savefig(fig3)
         plt.close(fig3)
         
         # ========== 第四页：功效曲线 ==========
         fig4, ax4 = plt.subplots(figsize=(8, 4))
         
-        fig4.text(0.05, 0.95, header_text, fontsize=8, color='gray')
+        fig4.text(0.05, 0.95, header_text, fontsize=9, color='gray')
         
         sample_sizes = np.arange(5, 201, 5)
         powers = [calc_power_curve(result['cohen_d'], result['alpha'], n, n) for n in sample_sizes]
@@ -692,7 +706,7 @@ def generate_pdf_report(result):
         ax4.legend()
         ax4.grid(True, alpha=0.3)
         
-        plt.text(0.85, 0.02, f"Page 4 of {total_pages}", fontsize=8, color='gray', transform=fig4.transFigure)
+        plt.text(0.85, 0.02, f"Page 4 of {total_pages}", fontsize=10, color='gray', transform=fig4.transFigure)
         pdf.savefig(fig4)
         plt.close(fig4)
     
