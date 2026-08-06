@@ -644,6 +644,30 @@ def generate_pdf_report(result):
         plt.close(fig2)
         
         # ========== 第三页：数据表格 ==========
+            # ========== 计算描述统计量 ==========
+    control_data = result['control_data']
+    treatment_data = result['treatment_data']
+    
+    stats_control = {
+        'N': len(control_data),
+        'Mean': np.mean(control_data),
+        'Median': np.median(control_data),
+        'Std': np.std(control_data),
+        'Q1': np.percentile(control_data, 25),
+        'Q3': np.percentile(control_data, 75),
+        'Min': np.min(control_data),
+        'Max': np.max(control_data)
+    }
+    stats_treatment = {
+        'N': len(treatment_data),
+        'Mean': np.mean(treatment_data),
+        'Median': np.median(treatment_data),
+        'Std': np.std(treatment_data),
+        'Q1': np.percentile(treatment_data, 25),
+        'Q3': np.percentile(treatment_data, 75),
+        'Min': np.min(treatment_data),
+        'Max': np.max(treatment_data)
+    }
         # ========== 动态分页：描述统计表 + 功效曲线 ==========
         # 物理尺寸（mm）
         PAGE_WIDTH = 210
