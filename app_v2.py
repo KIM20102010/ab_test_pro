@@ -675,18 +675,19 @@ def generate_pdf_report(result):
         table_height = n_rows * TABLE_ROW_HEIGHT
     
         # 判断能否同页
-        if table_height + CURVE_HEIGHT <= available_height:
-            total_pages = 3  # 封面、箱线图页、合并页
-            # ===== 合并页：曲线在上，表格在下 =====
-            fig_combined, (ax_curve, ax_table) = plt.subplots(
-                2, 1,
-                figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4),
-                gridspec_kw={
-                    'height_ratios': [CURVE_HEIGHT, table_height],
-                    'hspace': 0.2
-                }
-            )
-        # --- 绘制功效曲线 ---
+            # ========== 动态分页：表格 + 曲线 ==========
+    if table_height + CURVE_HEIGHT <= available_height:
+        total_pages = 3
+        # 合并页：曲线在上，表格在下
+        fig_combined, (ax_curve, ax_table) = plt.subplots(
+            2, 1,
+            figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4),
+            gridspec_kw={
+                'height_ratios': [CURVE_HEIGHT, table_height],
+                'hspace': 0.2
+            }
+        )
+        # 曲线
         sample_sizes = np.arange(5, 201, 5)
         powers = [calc_power_curve(result['cohen_d'], result['alpha'], n, n) for n in sample_sizes]
         ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
@@ -697,8 +698,7 @@ def generate_pdf_report(result):
         ax_curve.legend(loc='lower right', fontsize=9)
         ax_curve.grid(True, alpha=0.3)
         ax_curve.tick_params(axis='both', labelsize=9)
-
-        # --- 绘制表格 ---
+        # 表格
         ax_table.axis('off')
         ax_table.text(0.05, 0.9, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
         ax_table.text(0.05, 0.82, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
@@ -707,32 +707,28 @@ def generate_pdf_report(result):
             loc='upper center',
             cellLoc='center',
             colWidths=[0.25, 0.35, 0.35],
-            bbox=[0.1, 0.1, 0.8, 0.7]  # 预留足够空间
+            bbox=[0.1, 0.1, 0.8, 0.7]
         )
         table.auto_set_font_size(False)
         table.set_fontsize(9)
         table.scale(1, 1.2)
-
-        # 表格样式
         for (i, j), cell in table.get_celld().items():
             if i == 0:
                 cell.set_facecolor('#1a3b5c')
                 cell.set_text_props(weight='bold', color='white')
             else:
                 cell.set_facecolor('#f5f5f5' if i % 2 == 0 else 'white')
-
         # 页眉、页脚、页码
         fig_combined.text(0.05, 0.96, header_text, fontsize=9, color='gray')
         fig_combined.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray')
         pdf.savefig(fig_combined)
         plt.close(fig_combined)
 
-         else:
-            total_pages = 4
-        # ===== 第一页（曲线图） =====
+    else:
+        total_pages = 4
+        # 第一页：曲线图
         fig_curve = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
         ax_curve = fig_curve.add_subplot(111)
-        # 绘制曲线（同合并页的逻辑）
         sample_sizes = np.arange(5, 201, 5)
         powers = [calc_power_curve(result['cohen_d'], result['alpha'], n, n) for n in sample_sizes]
         ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
@@ -748,7 +744,7 @@ def generate_pdf_report(result):
         pdf.savefig(fig_curve)
         plt.close(fig_curve)
 
-        # ===== 第二页（表格） =====
+        # 第二页：表格
         fig_table = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
         ax_table = fig_table.add_subplot(111)
         ax_table.axis('off')
