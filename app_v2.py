@@ -561,7 +561,8 @@ def generate_pdf_report(result):
         plt.text(0.15, 0.72, "EXECUTIVE SUMMARY", fontsize=13, weight='bold', color='#1a3b5c')
         summary_text = f"Treatment outperforms Control by {lift*100:.1f}% (p={result['p_val']:.4f}, Power={result['current_power']:.1%})"
         summary_color = '#2E7D32' if is_significant and is_powered else '#C62828'
-        plt.text(0.15, 0.67, summary_text, fontsize=14, weight='bold', color=summary_color)
+        plt.text(0.15, 0.71, f"Treatment outperforms Control by {lift*100:.1f}%", fontsize=14, weight='bold', color=summary_color)
+        plt.text(0.15, 0.67, f"(p={result['p_val']:.4f}, Power={result['current_power']:.1%})", fontsize=12, color=summary_color)
         
         # 关键指标
         plt.text(0.15, 0.59, "KEY METRICS", fontsize=13, weight='bold', color='#1a3b5c')
