@@ -727,7 +727,7 @@ def generate_pdf_report(result):
         pdf.savefig(fig_combined)
         plt.close(fig_combined)
 
-        else:
+         else:
             total_pages = 4
         # ===== 第一页（曲线图） =====
         fig_curve = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
