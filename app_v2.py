@@ -531,13 +531,13 @@ def generate_pdf_report(result):
     
     # 落地建议（拆成两行）
     if is_significant and is_powered:
-        rec_line1 = "✅ Rollout to 100% — treatment shows"
+        rec_line1 = "[PASS] Rollout to 100% — treatment shows"
         rec_line2 = "statistically significant and practical significance."
     elif is_significant and not is_powered:
-        rec_line1 = "⚠️ Increase sample size — significant but"
+        rec_line1 = "[CAUTION] Increase sample size — significant but"
         rec_line2 = "underpowered, need more data for confident decision."
     else:
-        rec_line1 = "❌ Stop or iterate — no significant"
+        rec_line1 = "[FAIL] Stop or iterate — no significant"
         rec_line2 = "difference detected with sufficient power."
     
     project_name = st.session_state.uploaded_file_name or 'Untitled'
@@ -564,7 +564,7 @@ def generate_pdf_report(result):
                 img_box = OffsetImage(logo_resized, zoom=1)
                 ab = AnnotationBbox(
                     img_box,
-                    xy=(0.12, 0.94),
+                    xy=(0.12, 0.95),
                     xycoords='figure fraction',
                     box_alignment=(0, 1),
                     frameon=False
@@ -603,7 +603,7 @@ def generate_pdf_report(result):
         plt.text(0.12, 0.12, rec_line2, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
         
         plt.text(0.12, 0.06, "Confidential — for internal use only", fontsize=10, color='gray', transform=fig1.transFigure)
-        plt.text(0.85, 0.06, "Page 1", fontsize=10, color='gray', transform=fig1.transFigure)
+        plt.text(0.85, 0.06, f"Page 1 of {total_pages}", fontsize=10, color='gray', transform=fig1.transFigure)
         plt.axis('off')
         pdf.savefig(fig1)
         plt.close(fig1)
@@ -626,7 +626,7 @@ def generate_pdf_report(result):
         ax2.legend()
         ax2.grid(True, alpha=0.3)
         
-        plt.text(0.85, 0.02, "Page 2", fontsize=10, color='gray', transform=fig2.transFigure)
+        plt.text(0.85, 0.02, f"Page 2 of {total_pages}", fontsize=10, color='gray', transform=fig2.transFigure)
         pdf.savefig(fig2)
         plt.close(fig2)
         
