@@ -761,8 +761,8 @@ def generate_pdf_report(result):
                 bbox=[0.1, 0.1, 0.8, 0.75]
             )
             table.auto_set_font_size(False)
-            table.set_fontsize(10)
-            table.scale(1, 1.3)
+            table.set_fontsize(12)
+            table.scale(1, 1.5)
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
