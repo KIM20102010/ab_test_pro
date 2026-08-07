@@ -564,7 +564,7 @@ def generate_pdf_report(result):
                 img_box = OffsetImage(logo_resized, zoom=1)
                 ab = AnnotationBbox(
                     img_box,
-                    xy=(0.12, 0.80),
+                    xy=(0.12, 0.94),
                     xycoords='figure fraction',
                     box_alignment=(0, 1),
                     frameon=False
