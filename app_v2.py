@@ -714,12 +714,12 @@ def generate_pdf_report(result):
                 cellText=table_data,
                 loc='upper center',
                 cellLoc='center',
-                colWidths=[0.25, 0.35, 0.35],
-                bbox=[0.1, 0.1, 0.8, 0.7]
+                colWidths=[0.25, 0.375, 0.375],  # 总和为1.0
+                bbox=[0.025, 0.1, 0.95, 0.75]    # 左0.025，宽0.95，几乎占满
             )
             table.auto_set_font_size(False)
-            table.set_fontsize(13.0)   # 调大字体
-            table.scale(1, 1.9)         # 行宽放大
+            table.set_fontsize(14.5)   # 调大字体
+            table.scale(1, 2.1)         # 行宽放大
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
