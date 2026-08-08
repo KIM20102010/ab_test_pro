@@ -712,18 +712,18 @@ def generate_pdf_report(result):
             ax_curve.tick_params(axis='both', labelsize=9)
             # 表格
             ax_table.axis('off')
-            ax_table.text(0.05, 0.9, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
-            ax_table.text(0.05, 0.82, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
+            ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
+            ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
+            
             table = ax_table.table(
                 cellText=table_data,
-                loc='upper center',
+                loc='center',                     # 居中，不强制顶部
                 cellLoc='center',
-                colWidths=[0.25, 0.375, 0.375],  # 总和为1.0
-                bbox=[0.025, 0.10, 0.95, 0.72]    # 左0.025，宽0.95，几乎占满
+                colWidths=[0.25, 0.375, 0.375],
+                bbox=[0.025, 0.1, 0.95, None]     # height=None，自动适应
             )
             table.auto_set_font_size(False)
-            table.set_fontsize(14.5)   # 调大字体
-            table.scale(1, 2.6)         # 行宽放大
+            table.set_fontsize(10.5)   # 调大字体
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
@@ -764,14 +764,13 @@ def generate_pdf_report(result):
             ax_table.text(0.05, 0.82, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
             table = ax_table.table(
                 cellText=table_data,
-                loc='upper center',
+                loc='center',
                 cellLoc='center',
-                colWidths=[0.25, 0.35, 0.35],
-                bbox=[0.1, 0.15, 0.8, 0.60]
+                colWidths=[0.25, 0.375, 0.375],
+                bbox=[0.025, 0.1, 0.95, None]
             )
             table.auto_set_font_size(False)
-            table.set_fontsize(10.5)   # 调大字体
-            table.scale(1, 2.3)         # 行宽放大
+            table.set_fontsize(10.5)         # 行宽放大
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
