@@ -520,34 +520,88 @@ def calc_power_curve(effect, alpha, n1, n2):
 def generate_pdf_report(result):
     buffer = io.BytesIO()
     
-    # 生成报告ID
+    # ========== 1. 基础信息与业务指标 ==========
     st.session_state.report_counter += 1
     report_id = f"RPT-{datetime.now().strftime('%Y%m%d')}-{st.session_state.report_counter:04d}"
     
-    # 计算业务指标
     lift = (result['m_t'] - result['m_c']) / abs(result['m_c']) if result['m_c'] != 0 else 0
     is_significant = result['p_val'] < 0.05
     is_powered = result['current_power'] > 0.8
     
-    # 落地建议（拆成两行）
+    # 落地建议（纯文本，无 Emoji）
     if is_significant and is_powered:
-        rec_line1 = "[PASS] Rollout to 100% — treatment shows"
+        rec_line1 = "[PASS] Rollout to 100% – treatment shows"
         rec_line2 = "statistically significant and practical significance."
     elif is_significant and not is_powered:
-        rec_line1 = "[CAUTION] Increase sample size — significant but"
+        rec_line1 = "[CAUTION] Increase sample size – significant but"
         rec_line2 = "underpowered, need more data for confident decision."
     else:
-        rec_line1 = "[FAIL] Stop or iterate — no significant"
+        rec_line1 = "[FAIL] Stop or iterate – no significant"
         rec_line2 = "difference detected with sufficient power."
     
     project_name = st.session_state.uploaded_file_name or 'Untitled'
-    total_pages = 4  # 默认值，后面会动态更新
     
-    # 定义页眉通用内容
+    # ========== 2. 准备描述统计表数据 ==========
+    control_data = result['control_data']
+    treatment_data = result['treatment_data']
+    
+    stats_control = {
+        'N': len(control_data),
+        'Mean': np.mean(control_data),
+        'Median': np.median(control_data),
+        'Std': np.std(control_data),
+        'Q1': np.percentile(control_data, 25),
+        'Q3': np.percentile(control_data, 75),
+        'Min': np.min(control_data),
+        'Max': np.max(control_data)
+    }
+    stats_treatment = {
+        'N': len(treatment_data),
+        'Mean': np.mean(treatment_data),
+        'Median': np.median(treatment_data),
+        'Std': np.std(treatment_data),
+        'Q1': np.percentile(treatment_data, 25),
+        'Q3': np.percentile(treatment_data, 75),
+        'Min': np.min(treatment_data),
+        'Max': np.max(treatment_data)
+    }
+    
+    table_data = [
+        ['Metric', 'Control', 'Treatment'],
+        ['N', f"{stats_control['N']}", f"{stats_treatment['N']}"],
+        ['Mean', f"{stats_control['Mean']:.4f}", f"{stats_treatment['Mean']:.4f}"],
+        ['Median', f"{stats_control['Median']:.4f}", f"{stats_treatment['Median']:.4f}"],
+        ['Std Dev', f"{stats_control['Std']:.4f}", f"{stats_treatment['Std']:.4f}"],
+        ['Q1 (25%)', f"{stats_control['Q1']:.4f}", f"{stats_treatment['Q1']:.4f}"],
+        ['Q3 (75%)', f"{stats_control['Q3']:.4f}", f"{stats_treatment['Q3']:.4f}"],
+        ['Min', f"{stats_control['Min']:.4f}", f"{stats_treatment['Min']:.4f}"],
+        ['Max', f"{stats_control['Max']:.4f}", f"{stats_treatment['Max']:.4f}"],
+    ]
+    
+    # ========== 3. 动态分页判断（提前计算 total_pages） ==========
+    PAGE_WIDTH = 210
+    PAGE_HEIGHT = 297
+    PAGE_MARGIN_TOP = 25
+    PAGE_MARGIN_BOTTOM = 25
+    available_height = PAGE_HEIGHT - PAGE_MARGIN_TOP - PAGE_MARGIN_BOTTOM
+    
+    CURVE_HEIGHT = 100          # mm
+    TABLE_ROW_HEIGHT = 5.5      # mm（适当调大以容纳更大字体）
+    n_rows = len(table_data)
+    table_height = n_rows * TABLE_ROW_HEIGHT
+    
+    if table_height + CURVE_HEIGHT <= available_height:
+        total_pages = 3
+        use_combined = True
+    else:
+        total_pages = 4
+        use_combined = False
+    
     header_text = f"A/B TEST ANALYSIS REPORT  |  Report ID: {report_id}  |  Confidential"
     
+    # ========== 4. 生成 PDF（所有页面） ==========
     with pdf_backend.PdfPages(buffer, 'wb') as pdf:
-        # ========== 第一页：封面 ==========
+        # ---------- 第一页：封面 ----------
         fig1 = plt.figure(figsize=(8.5, 11))
         fig1.text(0.05, 0.97, header_text, fontsize=9, color='gray')
         
@@ -573,13 +627,11 @@ def generate_pdf_report(result):
             except Exception as e:
                 print(f"Logo 加载失败: {e}")
         
-        # 主标题
         plt.text(0.12, 0.82, "A/B TEST ANALYSIS REPORT", fontsize=22, weight='bold', transform=fig1.transFigure)
         plt.text(0.12, 0.77, f"Report ID: {report_id}", fontsize=12, color='gray', transform=fig1.transFigure)
         plt.text(0.12, 0.73, f"Project: {project_name}", fontsize=13, transform=fig1.transFigure)
         plt.text(0.12, 0.69, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", fontsize=11, color='gray', transform=fig1.transFigure)
         
-        # 执行摘要
         plt.text(0.12, 0.62, "EXECUTIVE SUMMARY", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
         summary_line1 = f"Treatment outperforms Control by {lift*100:.1f}%"
         summary_line2 = f"(p={result['p_val']:.4f}, Power={result['current_power']:.1%})"
@@ -587,17 +639,14 @@ def generate_pdf_report(result):
         plt.text(0.12, 0.57, summary_line1, fontsize=16, weight='bold', color=summary_color, transform=fig1.transFigure)
         plt.text(0.12, 0.53, summary_line2, fontsize=14, color=summary_color, transform=fig1.transFigure)
         
-        # 关键指标
         plt.text(0.12, 0.45, "KEY METRICS", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
         plt.text(0.12, 0.40, f"Difference: {result['m_t']-result['m_c']:.4f}  |  95% CI: [{result['ci_low']:.4f}, {result['ci_high']:.4f}]", fontsize=13, transform=fig1.transFigure)
         plt.text(0.12, 0.36, f"P-Value: {result['p_val']:.5f}  |  Cohen's d: {result['cohen_d']:.3f} ({result['effect_label']})", fontsize=13, transform=fig1.transFigure)
         plt.text(0.12, 0.32, f"Statistical Power: {result['current_power']:.1%}  |  MDE: {result['mde']:.3f}", fontsize=13, transform=fig1.transFigure)
         
-        # 样本量建议
         if result['current_power'] < 0.8:
             plt.text(0.12, 0.26, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (result['cohen_d']**2))} samples per group for 80% power.", fontsize=11, color='#C62828', transform=fig1.transFigure)
         
-        # 落地建议
         plt.text(0.12, 0.20, "RECOMMENDED ACTION", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
         plt.text(0.12, 0.16, rec_line1, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
         plt.text(0.12, 0.12, rec_line2, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
@@ -608,10 +657,8 @@ def generate_pdf_report(result):
         pdf.savefig(fig1)
         plt.close(fig1)
         
-        # ========== 第二页：箱线图 + 直方图 ==========
+        # ---------- 第二页：箱线图 + 直方图 ----------
         fig2, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-        control_data = result['control_data']
-        treatment_data = result['treatment_data']
         fig2.text(0.05, 0.95, header_text, fontsize=9, color='gray')
         
         bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
@@ -630,56 +677,9 @@ def generate_pdf_report(result):
         pdf.savefig(fig2)
         plt.close(fig2)
         
-        # ========== 第三页/第四页：动态分页 ==========
-        # 计算描述统计量
-        stats_control = {
-            'N': len(control_data),
-            'Mean': np.mean(control_data),
-            'Median': np.median(control_data),
-            'Std': np.std(control_data),
-            'Q1': np.percentile(control_data, 25),
-            'Q3': np.percentile(control_data, 75),
-            'Min': np.min(control_data),
-            'Max': np.max(control_data)
-        }
-        stats_treatment = {
-            'N': len(treatment_data),
-            'Mean': np.mean(treatment_data),
-            'Median': np.median(treatment_data),
-            'Std': np.std(treatment_data),
-            'Q1': np.percentile(treatment_data, 25),
-            'Q3': np.percentile(treatment_data, 75),
-            'Min': np.min(treatment_data),
-            'Max': np.max(treatment_data)
-        }
-        
-        # 构建表格数据
-        table_data = [
-            ['Metric', 'Control', 'Treatment'],
-            ['N', f"{stats_control['N']}", f"{stats_treatment['N']}"],
-            ['Mean', f"{stats_control['Mean']:.4f}", f"{stats_treatment['Mean']:.4f}"],
-            ['Median', f"{stats_control['Median']:.4f}", f"{stats_treatment['Median']:.4f}"],
-            ['Std Dev', f"{stats_control['Std']:.4f}", f"{stats_treatment['Std']:.4f}"],
-            ['Q1 (25%)', f"{stats_control['Q1']:.4f}", f"{stats_treatment['Q1']:.4f}"],
-            ['Q3 (75%)', f"{stats_control['Q3']:.4f}", f"{stats_treatment['Q3']:.4f}"],
-            ['Min', f"{stats_control['Min']:.4f}", f"{stats_treatment['Min']:.4f}"],
-            ['Max', f"{stats_control['Max']:.4f}", f"{stats_treatment['Max']:.4f}"],
-        ]
-        
-        # 物理尺寸（mm）
-        PAGE_WIDTH = 210
-        PAGE_HEIGHT = 297
-        PAGE_MARGIN_TOP = 25
-        PAGE_MARGIN_BOTTOM = 25
-        available_height = PAGE_HEIGHT - PAGE_MARGIN_TOP - PAGE_MARGIN_BOTTOM
-        
-        CURVE_HEIGHT = 100
-        TABLE_ROW_HEIGHT = 5.0
-        n_rows = len(table_data)
-        table_height = n_rows * TABLE_ROW_HEIGHT
-        
-        if table_height + CURVE_HEIGHT <= available_height:
-            total_pages = 3
+        # ---------- 第三页（及可能的第四页） ----------
+        if use_combined:
+            # 合并页：曲线在上，表格在下
             fig_combined, (ax_curve, ax_table) = plt.subplots(
                 2, 1,
                 figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4),
@@ -688,7 +688,7 @@ def generate_pdf_report(result):
                     'hspace': 0.2
                 }
             )
-            # 绘制曲线
+            # 曲线
             sample_sizes = np.arange(5, 201, 5)
             powers = [calc_power_curve(result['cohen_d'], result['alpha'], n, n) for n in sample_sizes]
             ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
@@ -699,7 +699,6 @@ def generate_pdf_report(result):
             ax_curve.legend(loc='lower right', fontsize=9)
             ax_curve.grid(True, alpha=0.3)
             ax_curve.tick_params(axis='both', labelsize=9)
-            
             # 表格
             ax_table.axis('off')
             ax_table.text(0.05, 0.9, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
@@ -712,8 +711,8 @@ def generate_pdf_report(result):
                 bbox=[0.1, 0.1, 0.8, 0.7]
             )
             table.auto_set_font_size(False)
-            table.set_fontsize(9)
-            table.scale(1, 1.2)
+            table.set_fontsize(10.5)   # 调大字体
+            table.scale(1, 1.4)         # 行宽放大
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
@@ -725,10 +724,9 @@ def generate_pdf_report(result):
             fig_combined.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray')
             pdf.savefig(fig_combined)
             plt.close(fig_combined)
-        
         else:
-            total_pages = 4
-            # 曲线页
+            # 分页：曲线页和表格页
+            # 曲线页（第三页）
             fig_curve = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
             ax_curve = fig_curve.add_subplot(111)
             sample_sizes = np.arange(5, 201, 5)
@@ -746,7 +744,7 @@ def generate_pdf_report(result):
             pdf.savefig(fig_curve)
             plt.close(fig_curve)
             
-            # 表格页
+            # 表格页（第四页）
             fig_table = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
             ax_table = fig_table.add_subplot(111)
             ax_table.axis('off')
@@ -761,8 +759,8 @@ def generate_pdf_report(result):
                 bbox=[0.1, 0.1, 0.8, 0.75]
             )
             table.auto_set_font_size(False)
-            table.set_fontsize(12)
-            table.scale(1, 1.5)
+            table.set_fontsize(10.5)   # 调大字体
+            table.scale(1, 1.4)         # 行宽放大
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
