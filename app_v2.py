@@ -664,6 +664,10 @@ def generate_pdf_report(result):
             gridspec_kw={'hspace': 0.3}     # 子图间距
         )
         fig2.text(0.05, 0.97, header_text, fontsize=9, color='gray')
+
+        # 添加总标题
+        fig2.text(0.5, 0.94, "Distribution Comparison: Box Plot & Histogram", 
+                  fontsize=14, weight='bold', ha='center', transform=fig2.transFigure)
         
         # 箱线图（在上方）
         bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
@@ -715,11 +719,11 @@ def generate_pdf_report(result):
                 loc='upper center',
                 cellLoc='center',
                 colWidths=[0.25, 0.375, 0.375],  # 总和为1.0
-                bbox=[0.025, 0.15, 0.95, 0.65]    # 左0.025，宽0.95，几乎占满
+                bbox=[0.025, 0.15, 0.95, 0.60]    # 左0.025，宽0.95，几乎占满
             )
             table.auto_set_font_size(False)
             table.set_fontsize(14.5)   # 调大字体
-            table.scale(1, 2.1)         # 行宽放大
+            table.scale(1, 2.5)         # 行宽放大
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
@@ -763,11 +767,11 @@ def generate_pdf_report(result):
                 loc='upper center',
                 cellLoc='center',
                 colWidths=[0.25, 0.35, 0.35],
-                bbox=[0.1, 0.15, 0.8, 0.65]
+                bbox=[0.1, 0.15, 0.8, 0.60]
             )
             table.auto_set_font_size(False)
             table.set_fontsize(10.5)   # 调大字体
-            table.scale(1, 1.4)         # 行宽放大
+            table.scale(1, 1.8)         # 行宽放大
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
