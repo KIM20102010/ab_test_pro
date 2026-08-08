@@ -657,10 +657,15 @@ def generate_pdf_report(result):
         pdf.savefig(fig1)
         plt.close(fig1)
         
-        # ---------- 第二页：箱线图 + 直方图 ----------
-        fig2, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-        fig2.text(0.05, 0.95, header_text, fontsize=9, color='gray')
+                # ---------- 第二页：箱线图 + 直方图（纵向布局） ----------
+        fig2, (ax1, ax2) = plt.subplots(
+            2, 1,                           # 2行1列，上下排列
+            figsize=(8.5, 11),              # 纵向页面
+            gridspec_kw={'hspace': 0.3}     # 子图间距
+        )
+        fig2.text(0.05, 0.97, header_text, fontsize=9, color='gray')
         
+        # 箱线图（在上方）
         bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
         for patch, color in zip(bp['boxes'], ['#2E86AB', '#A23B72']):
             patch.set_facecolor(color)
@@ -668,6 +673,8 @@ def generate_pdf_report(result):
         ax1.scatter(2, result['m_t'], color='white', s=80, zorder=5, label=f"Mean: {result['m_t']:.3f}")
         ax1.legend(loc='upper left')
         ax1.grid(True, alpha=0.3)
+        
+        # 直方图（在下方）
         ax2.hist(control_data, bins=15, alpha=0.6, label='Control', color='#2E86AB')
         ax2.hist(treatment_data, bins=15, alpha=0.6, label='Treatment', color='#A23B72')
         ax2.legend()
@@ -711,8 +718,8 @@ def generate_pdf_report(result):
                 bbox=[0.1, 0.1, 0.8, 0.7]
             )
             table.auto_set_font_size(False)
-            table.set_fontsize(10.5)   # 调大字体
-            table.scale(1, 1.4)         # 行宽放大
+            table.set_fontsize(11.5)   # 调大字体
+            table.scale(1, 1.6)         # 行宽放大
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
