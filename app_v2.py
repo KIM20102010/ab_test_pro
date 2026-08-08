@@ -718,8 +718,8 @@ def generate_pdf_report(result):
                 bbox=[0.1, 0.1, 0.8, 0.7]
             )
             table.auto_set_font_size(False)
-            table.set_fontsize(11.5)   # 调大字体
-            table.scale(1, 1.6)         # 行宽放大
+            table.set_fontsize(13.0)   # 调大字体
+            table.scale(1, 1.9)         # 行宽放大
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
