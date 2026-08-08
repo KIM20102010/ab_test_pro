@@ -723,7 +723,7 @@ def generate_pdf_report(result):
             )
             table.auto_set_font_size(False)
             table.set_fontsize(14.5)   # 调大字体
-            table.scale(1, 2.5)         # 行宽放大
+            table.scale(1, 2.8)         # 行宽放大
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
