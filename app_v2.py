@@ -715,7 +715,7 @@ def generate_pdf_report(result):
                 loc='upper center',
                 cellLoc='center',
                 colWidths=[0.25, 0.375, 0.375],  # 总和为1.0
-                bbox=[0.025, 0.1, 0.95, 0.75]    # 左0.025，宽0.95，几乎占满
+                bbox=[0.025, 0.15, 0.95, 0.70]    # 左0.025，宽0.95，几乎占满
             )
             table.auto_set_font_size(False)
             table.set_fontsize(14.5)   # 调大字体
@@ -763,7 +763,7 @@ def generate_pdf_report(result):
                 loc='upper center',
                 cellLoc='center',
                 colWidths=[0.25, 0.35, 0.35],
-                bbox=[0.1, 0.1, 0.8, 0.75]
+                bbox=[0.1, 0.15, 0.8, 0.70]
             )
             table.auto_set_font_size(False)
             table.set_fontsize(10.5)   # 调大字体
