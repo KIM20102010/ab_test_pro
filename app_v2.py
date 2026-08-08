@@ -720,10 +720,12 @@ def generate_pdf_report(result):
                 loc='center',                     # 居中，不强制顶部
                 cellLoc='center',
                 colWidths=[0.25, 0.375, 0.375],
-                bbox=[0.025, 0.1, 0.95, None]     # height=None，自动适应
+                bbox=[0.025, 0.08, 0.95, 0.76]     # height=None，自动适应
             )
             table.auto_set_font_size(False)
-            table.set_fontsize(10.5)   # 调大字体
+            table.set_fontsize(10.5)
+            table.scale(1, 2.8)  # 恢复行高缩放，核心！
+            # 缩放完成后再设置单元格样式
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
@@ -767,10 +769,11 @@ def generate_pdf_report(result):
                 loc='center',
                 cellLoc='center',
                 colWidths=[0.25, 0.375, 0.375],
-                bbox=[0.025, 0.1, 0.95, None]
+                bbox=[0.025, 0.08, 0.95, 0.76]
             )
             table.auto_set_font_size(False)
-            table.set_fontsize(10.5)         # 行宽放大
+            table.set_fontsize(10.5)
+            table.scale(1, 2.3)  # 第四页用2.3
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
