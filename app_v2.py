@@ -717,15 +717,16 @@ def generate_pdf_report(result):
             
             table = ax_table.table(
                 cellText=table_data,
-                loc='center',                     # 居中，不强制顶部
+                loc='center',
                 cellLoc='center',
                 colWidths=[0.25, 0.375, 0.375],
-                bbox=[0.025, 0.08, 0.95, 0.76]     # height=None，自动适应
+                bbox=[0.025, 0.05, 0.95, 0.68]
             )
+            
             table.auto_set_font_size(False)
-            table.set_fontsize(10.5)
-            table.scale(1, 2.8)  # 恢复行高缩放，核心！
-            # 缩放完成后再设置单元格样式
+            table.set_fontsize(13.5)
+            table.scale(1, 2.6)
+            
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
@@ -769,11 +770,12 @@ def generate_pdf_report(result):
                 loc='center',
                 cellLoc='center',
                 colWidths=[0.25, 0.375, 0.375],
-                bbox=[0.025, 0.08, 0.95, 0.76]
+                bbox=[0.025, 0.04, 0.95, 0.70]  # 底部更靠下，高度略大一点
             )
             table.auto_set_font_size(False)
-            table.set_fontsize(10.5)
-            table.scale(1, 2.3)  # 第四页用2.3
+            table.set_fontsize(13.5)    # 和合并页统一字体大小
+            table.scale(1, 2.7)         # 单页无图表，行高可以比合并页稍宽松
+            # 单元格样式循环（和上面一致）
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
