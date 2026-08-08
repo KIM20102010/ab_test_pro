@@ -647,9 +647,9 @@ def generate_pdf_report(result):
         if result['current_power'] < 0.8:
             plt.text(0.12, 0.26, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (result['cohen_d']**2))} samples per group for 80% power.", fontsize=11, color='#C62828', transform=fig1.transFigure)
         
-        plt.text(0.12, 0.20, "RECOMMENDED ACTION", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-        plt.text(0.12, 0.16, rec_line1, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-        plt.text(0.12, 0.12, rec_line2, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+        plt.text(0.12, 0.24, "RECOMMENDED ACTION", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+        plt.text(0.12, 0.20, rec_line1, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+        plt.text(0.12, 0.16, rec_line2, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
         
         plt.text(0.12, 0.06, "Confidential — for internal use only", fontsize=10, color='gray', transform=fig1.transFigure)
         plt.text(0.85, 0.06, f"Page 1 of {total_pages}", fontsize=10, color='gray', transform=fig1.transFigure)
