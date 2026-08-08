@@ -725,7 +725,7 @@ def generate_pdf_report(result):
             
             table.auto_set_font_size(False)
             table.set_fontsize(13.5)
-            table.scale(1, 2.6)
+            table.scale(1, 2.75)
             
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
@@ -774,7 +774,7 @@ def generate_pdf_report(result):
             )
             table.auto_set_font_size(False)
             table.set_fontsize(13.5)    # 和合并页统一字体大小
-            table.scale(1, 2.7)         # 单页无图表，行高可以比合并页稍宽松
+            table.scale(1, 2.9)         # 单页无图表，行高可以比合并页稍宽松
             # 单元格样式循环（和上面一致）
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
