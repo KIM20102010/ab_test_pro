@@ -432,6 +432,12 @@ def analyze_single_file(df, filename):
 
 # ========== 结果展示函数 ==========
 def display_results(result):
+    # ===== 按钮计数器 =====
+    if 'button_counter' not in st.session_state:
+        st.session_state.button_counter = 0
+    st.session_state.button_counter += 1
+    btn_key = f"btn_{st.session_state.button_counter}"
+    
     """显示分析结果（4个标签页）"""
     tab1, tab2, tab3, tab4 = st.tabs(["📈 Metrics", "📊 Distributions", "⚡ Power", "📋 Data"])
     
@@ -520,7 +526,7 @@ def display_results(result):
         
         if st.session_state.unlocked or st.session_state.user_plan != 'free':
             # 付费用户：可下载
-            if st.button("📥 Generate PDF Report", type="primary"):
+            if st.button("📥 Generate PDF Report", type="primary", key=f"gen_pdf_{btn_key}"):
                 pdf_data, report_id = generate_pdf_report(result)
                 st.download_button(
                     label="⬇️ Download PDF",
@@ -530,11 +536,7 @@ def display_results(result):
                 )
         else:
             # 免费用户：灰显锁定，使用 st.button
-            st.button(
-                label="🔒 Upgrade to Unlock PDF Report",
-                disabled=True,
-                help="Upgrade to Starter ($199/yr) or Founder ($399/yr) to download reports."
-            )
+            st.button("🔒 Upgrade to Unlock PDF Report", disabled=True, help=..., key=f"lock_btn_{btn_key}")
             st.caption("💡 Free users can preview all metrics and charts. Upgrade to download PDF reports with your logo.")
 def calc_power_curve(effect, alpha, n1, n2):
     df_t = n1 + n2 - 2
@@ -879,6 +881,7 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
                     data=zip_buffer,
                     file_name=f"ABTest_Batch_{datetime.now().strftime('%Y%m%d')}.zip",
                     mime="application/zip"
+                    key=f"download_pdf_{btn_key}"
                 )
     
     st.stop()
