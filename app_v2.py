@@ -880,7 +880,7 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
                     label="⬇️ Download ZIP",
                     data=zip_buffer,
                     file_name=f"ABTest_Batch_{datetime.now().strftime('%Y%m%d')}.zip",
-                    mime="application/zip"
+                    mime="application/zip",
                     key=f"download_pdf_{btn_key}"
                 )
     
