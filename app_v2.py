@@ -520,10 +520,10 @@ def display_results(result):
         if 'df_clean' in result:
             st.dataframe(result['df_clean'], use_container_width=True)
         
-        # PDF下载 - 灰显锁定逻辑
+        # ===== PDF 导出区块 =====
         st.markdown("---")
         st.subheader("📄 Report Export")
-        
+
         if st.session_state.unlocked or st.session_state.user_plan != 'free':
             # 付费用户：可下载
             if st.button("📥 Generate PDF Report", type="primary", key=f"gen_pdf_{btn_key}"):
@@ -531,12 +531,18 @@ def display_results(result):
                 st.download_button(
                     label="⬇️ Download PDF",
                     data=pdf_data,
-                    file_name=f"ABTest_{st.session_state.uploaded_file_name.replace('.csv','')}_{report_id}_{datetime.now().strftime('%Y%m%d')}.pdf",
-                    mime="application/pdf"
+                    file_name=f"ABTest_{st.session_state.uploaded_file_name.replace('.csv','')}_{report_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf",
+                    mime="application/pdf",
+                    key=f"download_pdf_{btn_key}"
                 )
         else:
-            # 免费用户：灰显锁定，使用 st.button
-            st.button("🔒 Upgrade to Unlock PDF Report", disabled=True, help=..., key=f"lock_btn_{btn_key}")
+            # 免费用户：灰显锁定
+            st.button(
+                label="🔒 Upgrade to Unlock PDF Report",
+                disabled=True,
+                help="Upgrade to Starter ($199/yr) or Founder ($399/yr) to download reports.",
+                key=f"lock_btn_{btn_key}"
+            )
             st.caption("💡 Free users can preview all metrics and charts. Upgrade to download PDF reports with your logo.")
 def calc_power_curve(effect, alpha, n1, n2):
     df_t = n1 + n2 - 2
@@ -844,6 +850,9 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
                 # 读取并分析
                 df = pd.read_csv(file)
                 result = analyze_single_file(df, file.name)
+                # 在批量分析循环内，分析完成后添加
+                pdf_data, report_id = generate_pdf_report(result)
+                result['pdf_data'] = pdf_data   # 将 PDF 数据存入结果
                 st.session_state.batch_results[file.name] = result
             except Exception as e:
                 st.session_state.batch_results[file.name] = {"error": str(e)}
