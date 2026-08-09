@@ -403,6 +403,33 @@ def perform_statistical_tests(control, treatment):
         'alpha': alpha
     }
 
+def analyze_single_file(df, filename):
+    """对单个 CSV 文件执行分析，返回结果字典（用于批量上传）"""
+    # 自动选取数值列（假设前两列）
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    if len(numeric_cols) < 2:
+        return {"error": f"File '{filename}' needs at least 2 numeric columns."}
+    control_col = numeric_cols[0]
+    treatment_col = numeric_cols[1]
+    
+    # 简单清洗（去除缺失值）
+    df_clean = df[[control_col, treatment_col]].dropna()
+    if len(df_clean) < 3:
+        return {"error": f"File '{filename}' has insufficient data after cleaning."}
+    
+    control_data = df_clean[control_col]
+    treatment_data = df_clean[treatment_col]
+    
+    # 调用统计检验
+    result = perform_statistical_tests(control_data, treatment_data)
+    # 补充必要字段
+    result['control_col'] = control_col
+    result['treatment_col'] = treatment_col
+    result['control_data'] = control_data
+    result['treatment_data'] = treatment_data
+    result['df_clean'] = df_clean
+    return result
+
 # ========== 结果展示函数 ==========
 def display_results(result):
     """显示分析结果（4个标签页）"""
