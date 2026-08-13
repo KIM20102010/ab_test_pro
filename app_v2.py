@@ -553,6 +553,11 @@ def calc_power_curve(effect, alpha, n1, n2):
 
 # ========== PDF生成函数 ==========
 def generate_pdf_report(result):
+    # 检查必要字段
+    required = ['m_c', 'm_t', 'cohen_d', 'alpha', 'current_power']
+    for key in required:
+        if key not in result or result[key] is None:
+            return b"", "ERROR"  # 返回空数据和错误ID
     buffer = io.BytesIO()
     
     # ========== 1. 基础信息与业务指标 ==========
@@ -945,6 +950,22 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
         status_text = st.empty()
         
         for idx, file in enumerate(st.session_state.batch_files):
+            try:
+                df = pd.read_csv(file)
+                result = analyze_single_file(df, file.name)
+                # 检查 result 是否包含必要字段
+                if 'error' in result:
+                    st.error(f"File {file.name}: {result['error']}")
+                    continue
+                # 确保关键字段存在
+                required_keys = ['m_c', 'm_t', 'cohen_d', 'alpha']
+                for key in required_keys:
+                    if key not in result or result[key] is None:
+                        st.error(f"File {file.name}: missing or None value for {key}")
+                        continue
+                # ... 继续处理
+            except Exception as e:
+                st.error(f"File {file.name} failed: {e}")
             status_text.text(f"Processing: {file.name} ({idx+1}/{len(st.session_state.batch_files)})")
             
             try:
