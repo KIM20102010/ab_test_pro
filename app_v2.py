@@ -489,29 +489,34 @@ def calc_power_curve(effect, alpha, n1, n2):
 # ========== PDF生成函数（带全局异常捕获） ==========
 def generate_pdf_report(result):
     try:
-        # 检查必要字段是否为有效数字
-        required = ['m_c', 'm_t', 'cohen_d', 'alpha', 'current_power']
-        for key in required:
-            if key not in result or not is_valid_number(result[key]):
-                return b"", "ERROR"
+        # ===== 强制类型检查 =====
+        def to_float(x, field_name):
+            if x is None or (isinstance(x, float) and (np.isnan(x) or np.isinf(x))):
+                raise ValueError(f"Field '{field_name}' is None or NaN")
+            try:
+                return float(x)
+            except:
+                raise ValueError(f"Field '{field_name}' cannot be converted to float (type: {type(x)})")
+        
+        m_c = to_float(result.get('m_c'), 'm_c')
+        m_t = to_float(result.get('m_t'), 'm_t')
+        cohen_d = to_float(result.get('cohen_d'), 'cohen_d')
+        alpha = to_float(result.get('alpha'), 'alpha')
+        current_power = to_float(result.get('current_power'), 'current_power')
+        p_val = to_float(result.get('p_val'), 'p_val')
+        
+        control_data = result.get('control_data')
+        treatment_data = result.get('treatment_data')
+        if control_data is None or treatment_data is None or len(control_data) < 2 or len(treatment_data) < 2:
+            raise ValueError("control_data or treatment_data is missing or too short")
         
         buffer = io.BytesIO()
         st.session_state.report_counter += 1
         report_id = f"RPT-{datetime.now().strftime('%Y%m%d')}-{st.session_state.report_counter:04d}"
         
-        # 安全计算 lift（防止除零）
-        m_c = result['m_c']
-        m_t = result['m_t']
-        try:
-            if abs(m_c) > 1e-9:
-                lift = (m_t - m_c) / abs(m_c)
-            else:
-                lift = 0.0
-        except:
-            lift = 0.0
-        
-        is_significant = result['p_val'] < 0.05
-        is_powered = result['current_power'] > 0.8
+        lift = (m_t - m_c) / abs(m_c) if abs(m_c) > 1e-9 else 0.0
+        is_significant = p_val < 0.05
+        is_powered = current_power > 0.8
         
         if is_significant and is_powered:
             rec_line1 = "[PASS] Rollout to 100% – treatment shows"
@@ -525,9 +530,7 @@ def generate_pdf_report(result):
         
         project_name = st.session_state.uploaded_file_name or 'Untitled'
         
-        control_data = result['control_data']
-        treatment_data = result['treatment_data']
-        
+        # 计算描述统计表（保持不变）
         stats_control = {
             'N': len(control_data),
             'Mean': np.mean(control_data),
@@ -548,7 +551,6 @@ def generate_pdf_report(result):
             'Min': np.min(treatment_data),
             'Max': np.max(treatment_data)
         }
-        
         table_data = [
             ['Metric', 'Control', 'Treatment'],
             ['N', f"{stats_control['N']}", f"{stats_treatment['N']}"],
@@ -561,13 +563,12 @@ def generate_pdf_report(result):
             ['Max', f"{stats_control['Max']:.4f}", f"{stats_treatment['Max']:.4f}"],
         ]
         
-        # ========== 动态分页判断 ==========
+        # 动态分页判断
         PAGE_WIDTH = 210
         PAGE_HEIGHT = 297
         PAGE_MARGIN_TOP = 25
         PAGE_MARGIN_BOTTOM = 25
         available_height = PAGE_HEIGHT - PAGE_MARGIN_TOP - PAGE_MARGIN_BOTTOM
-        
         CURVE_HEIGHT = 100
         TABLE_ROW_HEIGHT = 5.5
         n_rows = len(table_data)
@@ -605,26 +606,21 @@ def generate_pdf_report(result):
             plt.text(0.12, 0.77, f"Report ID: {report_id}", fontsize=12, color='gray', transform=fig1.transFigure)
             plt.text(0.12, 0.73, f"Project: {project_name}", fontsize=13, transform=fig1.transFigure)
             plt.text(0.12, 0.69, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", fontsize=11, color='gray', transform=fig1.transFigure)
-            
             plt.text(0.12, 0.62, "EXECUTIVE SUMMARY", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
             summary_line1 = f"Treatment outperforms Control by {lift*100:.1f}%"
-            summary_line2 = f"(p={result['p_val']:.4f}, Power={result['current_power']:.1%})"
+            summary_line2 = f"(p={p_val:.4f}, Power={current_power:.1%})"
             summary_color = '#2E7D32' if is_significant and is_powered else '#C62828'
             plt.text(0.12, 0.57, summary_line1, fontsize=16, weight='bold', color=summary_color, transform=fig1.transFigure)
             plt.text(0.12, 0.53, summary_line2, fontsize=14, color=summary_color, transform=fig1.transFigure)
-            
             plt.text(0.12, 0.45, "KEY METRICS", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-            plt.text(0.12, 0.40, f"Difference: {result['m_t']-result['m_c']:.4f}  |  95% CI: [{result['ci_low']:.4f}, {result['ci_high']:.4f}]", fontsize=13, transform=fig1.transFigure)
-            plt.text(0.12, 0.36, f"P-Value: {result['p_val']:.5f}  |  Cohen's d: {result['cohen_d']:.3f} ({result['effect_label']})", fontsize=13, transform=fig1.transFigure)
-            plt.text(0.12, 0.32, f"Statistical Power: {result['current_power']:.1%}  |  MDE: {result['mde']:.3f}", fontsize=13, transform=fig1.transFigure)
-            
-            if result['current_power'] < 0.8:
-                plt.text(0.12, 0.26, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (result['cohen_d']**2))} samples per group for 80% power.", fontsize=11, color='#C62828', transform=fig1.transFigure)
-            
+            plt.text(0.12, 0.40, f"Difference: {m_t-m_c:.4f}  |  95% CI: [{result['ci_low']:.4f}, {result['ci_high']:.4f}]", fontsize=13, transform=fig1.transFigure)
+            plt.text(0.12, 0.36, f"P-Value: {p_val:.5f}  |  Cohen's d: {cohen_d:.3f} ({result['effect_label']})", fontsize=13, transform=fig1.transFigure)
+            plt.text(0.12, 0.32, f"Statistical Power: {current_power:.1%}  |  MDE: {result['mde']:.3f}", fontsize=13, transform=fig1.transFigure)
+            if current_power < 0.8:
+                plt.text(0.12, 0.26, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (cohen_d**2))} samples per group for 80% power.", fontsize=11, color='#C62828', transform=fig1.transFigure)
             plt.text(0.12, 0.24, "RECOMMENDED ACTION", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
             plt.text(0.12, 0.20, rec_line1, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
             plt.text(0.12, 0.16, rec_line2, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-            
             plt.text(0.12, 0.06, "Confidential — for internal use only", fontsize=10, color='gray', transform=fig1.transFigure)
             plt.text(0.85, 0.06, f"Page 1 of {total_pages}", fontsize=10, color='gray', transform=fig1.transFigure)
             plt.axis('off')
@@ -638,8 +634,8 @@ def generate_pdf_report(result):
             bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
             for patch, color in zip(bp['boxes'], ['#2E86AB', '#A23B72']):
                 patch.set_facecolor(color)
-            ax1.scatter(1, result['m_c'], color='white', s=80, zorder=5, label=f"Mean: {result['m_c']:.3f}")
-            ax1.scatter(2, result['m_t'], color='white', s=80, zorder=5, label=f"Mean: {result['m_t']:.3f}")
+            ax1.scatter(1, m_c, color='white', s=80, zorder=5, label=f"Mean: {m_c:.3f}")
+            ax1.scatter(2, m_t, color='white', s=80, zorder=5, label=f"Mean: {m_t:.3f}")
             ax1.legend(loc='upper left')
             ax1.grid(True, alpha=0.3)
             ax2.hist(control_data, bins=15, alpha=0.6, label='Control', color='#2E86AB')
@@ -658,24 +654,24 @@ def generate_pdf_report(result):
                 )
                 # 曲线
                 target_power = 0.8
-                def find_sample_size_for_power(effect, alpha, target_power=0.8, max_n=5000):
+                def find_sample_size_for_power(eff, alpha, target_power=0.8, max_n=5000):
                     for n in range(10, max_n, 5):
-                        if calc_power_curve(effect, alpha, n, n) >= target_power:
+                        if calc_power_curve(eff, alpha, n, n) >= target_power:
                             return n
                     return max_n
-                needed_n = find_sample_size_for_power(result['cohen_d'], result['alpha'])
+                needed_n = find_sample_size_for_power(cohen_d, alpha)
                 max_x = max(200, needed_n + 50)
                 max_x = min(max_x, 5000)
                 if max_x <= 200:
                     sample_sizes = np.arange(5, max_x+1, 5)
                 else:
                     sample_sizes = np.linspace(5, max_x, 100, dtype=int)
-                powers = [calc_power_curve(result['cohen_d'], result['alpha'], n, n) for n in sample_sizes]
+                powers = [calc_power_curve(cohen_d, alpha, n, n) for n in sample_sizes]
                 ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
                 ax_curve.axhline(target_power, color='red', linestyle='--', alpha=0.7, label='80% Threshold')
                 ax_curve.set_xlabel("Sample Size (per group)", fontsize=10)
                 ax_curve.set_ylabel("Statistical Power", fontsize=10)
-                ax_curve.set_title(f"Power Curve (α={result['alpha']}, d={result['cohen_d']:.2f})", fontsize=11)
+                ax_curve.set_title(f"Power Curve (α={alpha}, d={cohen_d:.2f})", fontsize=11)
                 ax_curve.legend(loc='lower right', fontsize=9)
                 ax_curve.grid(True, alpha=0.3)
                 ax_curve.tick_params(axis='both', labelsize=9)
@@ -683,22 +679,22 @@ def generate_pdf_report(result):
                 if needed_n <= max_x:
                     ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
                     ax_curve.legend(loc='lower right')
-                effect_text = f"d = {result['cohen_d']:.2f}"
-                if result['cohen_d'] < 0.2:
+                effect_text = f"d = {cohen_d:.2f}"
+                if cohen_d < 0.2:
                     effect_text += " (very small effect)"
-                elif result['cohen_d'] < 0.5:
+                elif cohen_d < 0.5:
                     effect_text += " (small effect)"
                 else:
                     effect_text += " (medium to large effect)"
                 ax_curve.text(0.65, 0.75, effect_text, fontsize=10, color='#333333',
                               transform=ax_curve.transAxes, ha='left', va='top',
                               bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
-                if result['cohen_d'] < 0.2 and needed_n > 500:
+                if cohen_d < 0.2 and needed_n > 500:
                     note = "Tiny effect → very large sample needed. Consider redesign."
                 elif needed_n > 200:
                     note = f"Need ~{needed_n} samples/group for 80% power."
                 else:
-                    note = f"Power {result['current_power']:.1%}; {needed_n} samples/group recommended."
+                    note = f"Power {current_power:.1%}; {needed_n} samples/group recommended."
                 ax_curve.text(0.02, 0.02, note, fontsize=8, color='#333333',
                               transform=ax_curve.transAxes, ha='left', va='bottom', wrap=True)
                 # 表格
@@ -724,24 +720,24 @@ def generate_pdf_report(result):
                 fig_curve = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
                 ax_curve = fig_curve.add_subplot(111)
                 target_power = 0.8
-                def find_sample_size_for_power(effect, alpha, target_power=0.8, max_n=5000):
+                def find_sample_size_for_power(eff, alpha, target_power=0.8, max_n=5000):
                     for n in range(10, max_n, 5):
-                        if calc_power_curve(effect, alpha, n, n) >= target_power:
+                        if calc_power_curve(eff, alpha, n, n) >= target_power:
                             return n
                     return max_n
-                needed_n = find_sample_size_for_power(result['cohen_d'], result['alpha'])
+                needed_n = find_sample_size_for_power(cohen_d, alpha)
                 max_x = max(200, needed_n + 50)
                 max_x = min(max_x, 5000)
                 if max_x <= 200:
                     sample_sizes = np.arange(5, max_x+1, 5)
                 else:
                     sample_sizes = np.linspace(5, max_x, 100, dtype=int)
-                powers = [calc_power_curve(result['cohen_d'], result['alpha'], n, n) for n in sample_sizes]
+                powers = [calc_power_curve(cohen_d, alpha, n, n) for n in sample_sizes]
                 ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
                 ax_curve.axhline(target_power, color='red', linestyle='--', alpha=0.7, label='80% Threshold')
                 ax_curve.set_xlabel("Sample Size (per group)", fontsize=10)
                 ax_curve.set_ylabel("Statistical Power", fontsize=10)
-                ax_curve.set_title(f"Power Curve (α={result['alpha']}, d={result['cohen_d']:.2f})", fontsize=11)
+                ax_curve.set_title(f"Power Curve (α={alpha}, d={cohen_d:.2f})", fontsize=11)
                 ax_curve.legend(loc='lower right', fontsize=9)
                 ax_curve.grid(True, alpha=0.3)
                 ax_curve.tick_params(axis='both', labelsize=9)
@@ -749,22 +745,22 @@ def generate_pdf_report(result):
                 if needed_n <= max_x:
                     ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
                     ax_curve.legend(loc='lower right')
-                effect_text = f"d = {result['cohen_d']:.2f}"
-                if result['cohen_d'] < 0.2:
+                effect_text = f"d = {cohen_d:.2f}"
+                if cohen_d < 0.2:
                     effect_text += " (very small effect)"
-                elif result['cohen_d'] < 0.5:
+                elif cohen_d < 0.5:
                     effect_text += " (small effect)"
                 else:
                     effect_text += " (medium to large effect)"
                 ax_curve.text(0.65, 0.75, effect_text, fontsize=10, color='#333333',
                               transform=ax_curve.transAxes, ha='left', va='top',
                               bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
-                if result['cohen_d'] < 0.2 and needed_n > 500:
+                if cohen_d < 0.2 and needed_n > 500:
                     note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re-evaluating the experiment design."
                 elif needed_n > 200:
                     note = f"To reach 80% power, you need about {needed_n} samples per group. This may require extending the collection period."
                 else:
-                    note = f"Current power is {result['current_power']:.1%}. About {needed_n} samples per group is recommended for 80% power."
+                    note = f"Current power is {current_power:.1%}. About {needed_n} samples per group is recommended for 80% power."
                 ax_curve.text(0.02, -0.30, note, fontsize=8, color='#333333',
                               transform=ax_curve.transAxes, ha='left', va='bottom', wrap=True)
                 fig_curve.text(0.05, 0.96, header_text, fontsize=9, color='gray')
@@ -796,11 +792,16 @@ def generate_pdf_report(result):
         buffer.seek(0)
         st.session_state.last_report_id = report_id
         return buffer.getvalue(), report_id
+    
     except Exception as e:
-        # 全局异常捕获，防止任何意外崩溃
-        st.error(f"PDF generation error: {str(e)}")
+        import traceback
+        st.error(f"❌ PDF generation error: {str(e)}")
+        # 输出关键字段帮助定位
+        st.error(f"Result keys: {list(result.keys())}")
+        st.error(f"m_c={result.get('m_c')}, m_t={result.get('m_t')}, cohen_d={result.get('cohen_d')}, alpha={result.get('alpha')}, power={result.get('current_power')}")
+        # 打印堆栈跟踪（在日志中可见）
+        print(traceback.format_exc())
         return b"", "ERROR"
-
 # ========== 主逻辑 ==========
 st.title("📊 A/B Test Pro")
 st.markdown("**Upload your CSV to automatically compute statistical significance, power curves, and professional PDF reports.**")
