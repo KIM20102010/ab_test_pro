@@ -948,95 +948,57 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
         
         progress_bar = st.progress(0)
         status_text = st.empty()
+        total_files = len(st.session_state.batch_files)
         
         for idx, file in enumerate(st.session_state.batch_files):
-            status_text.text(f"Processing: {file.name} ({idx+1}/{len(st.session_state.batch_files)})")
+            status_text.text(f"Processing: {file.name} ({idx+1}/{total_files})")
+            
             try:
-                # 读取CSV，空单元格填充NaN
+                # 1. 读取CSV
                 df = pd.read_csv(file).fillna(np.nan)
                 
-                # 检查是否为空或没有列
+                # 2. 基本校验
                 if df.empty or df.columns.empty:
                     st.warning(f"⚠️ Skipping {file.name}: file is empty or has no columns.")
                     continue
                 
-                # 检查是否有至少 2 个数值列
                 numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
                 if len(numeric_cols) < 2:
                     st.warning(f"⚠️ Skipping {file.name}: need at least 2 numeric columns.")
                     continue
                 
-                # 内部捕获分析函数抛出的异常
-                try:
-                    result = analyze_single_file(df, file.name)
-                except Exception as inner_e:
-                    st.error(f"❌ Skipping {file.name}: analysis error: {str(inner_e)}")
-                    continue
-                
+                # 3. 执行分析
+                result = analyze_single_file(df, file.name)
                 if 'error' in result:
                     st.warning(f"⚠️ Skipping {file.name}: {result['error']}")
                     continue
                 
-                # =========新增：校验关键字段不能为None=========
-                check_keys = ["effect_size", "power", "p_value", "group_mean_a", "group_mean_b"]
-                none_detected = any(k in result and result[k] is None for k in check_keys)
-                if none_detected:
+                # 4. 校验关键字段是否有效（防止 None 参与除法）
+                required_keys = ['m_c', 'm_t', 'cohen_d', 'alpha', 'current_power']
+                if any(key not in result or result[key] is None for key in required_keys):
                     st.error(f"❌ Skipping {file.name}: computed value is None, cannot render PDF")
                     st.session_state.batch_results[file.name] = {"error": "computed value is None"}
-                    progress_bar.progress((idx + 1) / len(st.session_state.batch_files))
                     continue
-                # ============================================
                 
+                # 5. 生成 PDF
                 st.session_state.uploaded_file_name = file.name
-                try:
-                    pdf_data, report_id = generate_pdf_report(result)
-                except Exception as pdf_e:
-                    st.error(f"❌ Skipping {file.name}: pdf generate error: {str(pdf_e)}")
-                    st.session_state.batch_results[file.name] = {"error": str(pdf_e)}
-                    progress_bar.progress((idx + 1) / len(st.session_state.batch_files))
-                    continue
+                pdf_data, report_id = generate_pdf_report(result)
                 
+                # 6. 存储结果（包含 PDF 数据）
                 result['pdf_data'] = pdf_data
                 st.session_state.batch_results[file.name] = result
-            status_text.text(f"Processing: {file.name} ({idx+1}/{len(st.session_state.batch_files)})")
-            
-            try:
-                # 读取并分析
-                df = pd.read_csv(file).fillna(np.nan)
-                result = analyze_single_file(df, file.name)
-            
-                # ----------------新增校验：检测关键字段是否为None----------------
-                check_keys = ["effect_size", "power", "p_value", "group_mean_a", "group_mean_b"]
-                none_detected = any(k in result and result[k] is None for k in check_keys)
-                if none_detected:
-                    st.error(f"❌ Skipping {file.name}: computed value is None, cannot render PDF")
-                    st.session_state.batch_results[file.name] = {"error": "computed value is None"}
-                    progress_bar.progress((idx + 1) / len(st.session_state.batch_files))
-                    continue
-                # ----------------------------------------------------------------
-            
-                # PDF生成单独捕获异常
-                try:
-                    pdf_data, report_id = generate_pdf_report(result)
-                except Exception as pdf_e:
-                    st.error(f"❌ Skipping {file.name}: PDF generate error: {str(pdf_e)}")
-                    st.session_state.batch_results[file.name] = {"error": str(pdf_e)}
-                    progress_bar.progress((idx + 1) / len(st.session_state.batch_files))
-                    continue
-            
-                result['pdf_data'] = pdf_data  # 将 PDF 数据存入结果
-                st.session_state.batch_results[file.name] = result
-            
+                
             except Exception as e:
                 st.error(f"❌ Error processing {file.name}: {str(e)}")
                 st.session_state.batch_results[file.name] = {"error": str(e)}
-                progress_bar.progress((idx + 1) / len(st.session_state.batch_files))
-                continue
             
-            status_text.text("✅ Batch analysis complete!")
-            st.session_state.is_processing = False
-            st.session_state.analysis_done = True
-            st.rerun()
+            # 更新进度（无论成功或失败都更新）
+            progress_bar.progress((idx + 1) / total_files)
+        
+        status_text.text("✅ Batch analysis complete!")
+        st.session_state.is_processing = False
+        st.session_state.analysis_done = True
+        st.rerun()
     
     # 显示批量结果
     if st.session_state.analysis_done and st.session_state.batch_results:
@@ -1048,24 +1010,28 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
                 else:
                     display_results(result)
         
-        # 批量下载所有PDF
+        # 批量下载所有PDF（只对成功的文件生成ZIP）
         if st.session_state.unlocked or st.session_state.user_plan != 'free':
-            if st.button("📦 Download All PDFs (ZIP)"):
-                import zipfile
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, 'w') as zf:
-                    for name, result in st.session_state.batch_results.items():
-                        if "pdf_data" in result:
+            # 收集所有有效的 PDF 数据
+            valid_pdfs = {name: res['pdf_data'] for name, res in st.session_state.batch_results.items() if "pdf_data" in res}
+            if valid_pdfs:
+                if st.button("📦 Download All PDFs (ZIP)"):
+                    import zipfile
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, 'w') as zf:
+                        for name, pdf_data in valid_pdfs.items():
                             pdf_filename = f"ABTest_{name.replace('.csv','')}_{datetime.now().strftime('%Y%m%d')}.pdf"
-                            zf.writestr(pdf_filename, result['pdf_data'])
-                zip_buffer.seek(0)
-                st.download_button(
-                    label="⬇️ Download ZIP",
-                    data=zip_buffer,
-                    file_name=f"ABTest_Batch_{datetime.now().strftime('%Y%m%d')}.zip",
-                    mime="application/zip",
-                    key="download_all_zip"
-                )
+                            zf.writestr(pdf_filename, pdf_data)
+                    zip_buffer.seek(0)
+                    st.download_button(
+                        label="⬇️ Download ZIP",
+                        data=zip_buffer,
+                        file_name=f"ABTest_Batch_{datetime.now().strftime('%Y%m%d')}.zip",
+                        mime="application/zip",
+                        key="download_all_zip"
+                    )
+            else:
+                st.info("ℹ️ No valid PDFs generated in this batch.")
     
     st.stop()
 
