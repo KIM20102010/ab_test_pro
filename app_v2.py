@@ -1028,9 +1028,10 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
                 st.session_state.batch_results[file.name] = result
             
             except Exception as e:
+                st.error(f"❌ Error processing {file.name}: {str(e)}")
                 st.session_state.batch_results[file.name] = {"error": str(e)}
-            
-            progress_bar.progress((idx + 1) / len(st.session_state.batch_files))
+                progress_bar.progress((idx + 1) / len(st.session_state.batch_files))
+                continue
             
             status_text.text("✅ Batch analysis complete!")
             st.session_state.is_processing = False
