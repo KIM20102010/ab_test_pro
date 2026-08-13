@@ -653,7 +653,7 @@ def generate_pdf_report(result):
                 img_box = OffsetImage(logo_resized, zoom=1)
                 ab = AnnotationBbox(
                     img_box,
-                    xy=(0.12, 0.95),
+                    xy=(0.12, 0.962),
                     xycoords='figure fraction',
                     box_alignment=(0, 1),
                     frameon=False
@@ -723,9 +723,8 @@ def generate_pdf_report(result):
         pdf.savefig(fig2)
         plt.close(fig2)
         
-        # ---------- 第三页（及可能的第四页） ----------
+        # ========== 合并页：曲线在上，表格在下 ==========
         if use_combined:
-            # 合并页：曲线在上，表格在下
             fig_combined, (ax_curve, ax_table) = plt.subplots(
                 2, 1,
                 figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4),
@@ -734,33 +733,81 @@ def generate_pdf_report(result):
                     'hspace': 0.2
                 }
             )
-            # 曲线
-            sample_sizes = np.arange(5, 201, 5)
+            
+            # ---- 功效曲线优化（与分页保持一致） ----
+            # 1. 计算达到80%功效所需的样本量
+            target_power = 0.8
+            def find_sample_size_for_power(effect, alpha, target_power=0.8, max_n=5000):
+                for n in range(10, max_n, 5):
+                    if calc_power_curve(effect, alpha, n, n) >= target_power:
+                        return n
+                return max_n
+            needed_n = find_sample_size_for_power(result['cohen_d'], result['alpha'])
+            
+            # 2. 确定X轴范围
+            max_x = max(200, needed_n + 50)
+            max_x = min(max_x, 5000)  # 上限5000
+            if max_x <= 200:
+                sample_sizes = np.arange(5, max_x+1, 5)
+            else:
+                sample_sizes = np.linspace(5, max_x, 100, dtype=int)
+            
             powers = [calc_power_curve(result['cohen_d'], result['alpha'], n, n) for n in sample_sizes]
+            
+            # 3. 绘制曲线
             ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
-            ax_curve.axhline(0.8, color='red', linestyle='--', alpha=0.7, label='80% Threshold')
+            ax_curve.axhline(target_power, color='red', linestyle='--', alpha=0.7, label='80% Threshold')
+            
+            # 4. 坐标轴设置
             ax_curve.set_xlabel("Sample Size (per group)", fontsize=10)
             ax_curve.set_ylabel("Statistical Power", fontsize=10)
             ax_curve.set_title(f"Power Curve (α={result['alpha']}, d={result['cohen_d']:.2f})", fontsize=11)
             ax_curve.legend(loc='lower right', fontsize=9)
             ax_curve.grid(True, alpha=0.3)
             ax_curve.tick_params(axis='both', labelsize=9)
-            # 表格
+            ax_curve.set_ylim(0, 0.85)   # Y轴固定
+            
+            # 5. 若在显示范围内，标注达到80%功率的点
+            if needed_n <= max_x:
+                ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
+                ax_curve.legend(loc='lower right')
+            
+            # 6. 效应量文本标注（右上角）
+            effect_text = f"d = {result['cohen_d']:.2f}"
+            if result['cohen_d'] < 0.2:
+                effect_text += " (very small effect)"
+            elif result['cohen_d'] < 0.5:
+                effect_text += " (small effect)"
+            else:
+                effect_text += " (medium to large effect)"
+            ax_curve.text(0.65, 0.75, effect_text, fontsize=10, color='#333333',
+                          transform=ax_curve.transAxes, ha='left', va='top',
+                          bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
+            
+            # 7. 曲线下方诊断文字（因合并页空间有限，文字精简并置于曲线内左下角）
+            if result['cohen_d'] < 0.2 and needed_n > 500:
+                note = "Tiny effect → very large sample needed. Consider redesign."
+            elif needed_n > 200:
+                note = f"Need ~{needed_n} samples/group for 80% power."
+            else:
+                note = f"Power {result['current_power']:.1%}; {needed_n} samples/group recommended."
+            ax_curve.text(0.02, 0.02, note, fontsize=8, color='#333333',
+                          transform=ax_curve.transAxes, ha='left', va='bottom', wrap=True)
+            
+            # ---- 表格部分保持不变 ----
             ax_table.axis('off')
             ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
             ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
-            
             table = ax_table.table(
                 cellText=table_data,
                 loc='center',
                 cellLoc='center',
                 colWidths=[0.25, 0.375, 0.375],
-                bbox=[0.025, 0.05, 0.95, 0.68]
+                bbox=[0.025, 0.1, 0.95, None]
             )
-            
             table.auto_set_font_size(False)
-            table.set_fontsize(13.5)
-            table.scale(1, 2.75)
+            table.set_fontsize(10.5)
+            # 不需要 scale，因为 height=None 自动适应
             
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
@@ -774,49 +821,103 @@ def generate_pdf_report(result):
             pdf.savefig(fig_combined)
             plt.close(fig_combined)
         else:
-            # 分页：曲线页和表格页
+            # ========== 分页：曲线页和表格页 ==========
             # 曲线页（第三页）
             fig_curve = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
             ax_curve = fig_curve.add_subplot(111)
-            sample_sizes = np.arange(5, 201, 5)
+            
+            # ---- 优化：动态X轴、Y轴固定、标注效应量 ----
+            # 1. 计算达到80%功效所需的样本量
+            target_power = 0.8
+            def find_sample_size_for_power(effect, alpha, target_power=0.8, max_n=5000):
+                for n in range(10, max_n, 5):
+                    if calc_power_curve(effect, alpha, n, n) >= target_power:
+                        return n
+                return max_n
+            needed_n = find_sample_size_for_power(result['cohen_d'], result['alpha'])
+            
+            # 2. 确定X轴范围
+            max_x = max(200, needed_n + 50)
+            max_x = min(max_x, 5000)  # 上限5000，防止显示过长
+            if max_x <= 200:
+                sample_sizes = np.arange(5, max_x+1, 5)
+            else:
+                sample_sizes = np.linspace(5, max_x, 100, dtype=int)
+            
             powers = [calc_power_curve(result['cohen_d'], result['alpha'], n, n) for n in sample_sizes]
+            
+            # 3. 绘制曲线
             ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
-            ax_curve.axhline(0.8, color='red', linestyle='--', alpha=0.7, label='80% Threshold')
+            ax_curve.axhline(target_power, color='red', linestyle='--', alpha=0.7, label='80% Threshold')
+            
+            # 4. 坐标轴设置
             ax_curve.set_xlabel("Sample Size (per group)", fontsize=10)
             ax_curve.set_ylabel("Statistical Power", fontsize=10)
             ax_curve.set_title(f"Power Curve (α={result['alpha']}, d={result['cohen_d']:.2f})", fontsize=11)
             ax_curve.legend(loc='lower right', fontsize=9)
             ax_curve.grid(True, alpha=0.3)
             ax_curve.tick_params(axis='both', labelsize=9)
+            ax_curve.set_ylim(0, 0.85)   # Y轴固定从0到0.85
+            
+            # 5. 若在显示范围内，标注达到80%功率的点
+            if needed_n <= max_x:
+                ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
+                ax_curve.legend(loc='lower right')
+            
+            # 6. 效应量文本标注（右上角）
+            effect_text = f"d = {result['cohen_d']:.2f}"
+            if result['cohen_d'] < 0.2:
+                effect_text += " (very small effect)"
+            elif result['cohen_d'] < 0.5:
+                effect_text += " (small effect)"
+            else:
+                effect_text += " (medium to large effect)"
+            ax_curve.text(0.65, 0.75, effect_text, fontsize=10, color='#333333',
+                          transform=ax_curve.transAxes, ha='left', va='top',
+                          bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
+            
+            # 7. 曲线下方诊断文字
+            if result['cohen_d'] < 0.2 and needed_n > 500:
+                note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re-evaluating the experiment design."
+            elif needed_n > 200:
+                note = f"To reach 80% power, you need about {needed_n} samples per group. This may require extending the collection period."
+            else:
+                note = f"Current power is {result['current_power']:.1%}. About {needed_n} samples per group is recommended for 80% power."
+            ax_curve.text(0.02, -0.30, note, fontsize=8, color='#333333',
+                          transform=ax_curve.transAxes, ha='left', va='bottom', wrap=True)
+            
+            # 页眉、页码
             fig_curve.text(0.05, 0.96, header_text, fontsize=9, color='gray')
             fig_curve.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray')
             pdf.savefig(fig_curve)
             plt.close(fig_curve)
-            
-            # 表格页（第四页）
+    
+            # ========== 表格页（第四页） ==========
             fig_table = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
             ax_table = fig_table.add_subplot(111)
             ax_table.axis('off')
             fig_table.text(0.05, 0.96, header_text, fontsize=9, color='gray')
-            ax_table.text(0.05, 0.9, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
-            ax_table.text(0.05, 0.82, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
+            ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
+            ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
+            
             table = ax_table.table(
                 cellText=table_data,
-                loc='center',
+                loc='center',           # 居中，不强制顶部
                 cellLoc='center',
                 colWidths=[0.25, 0.375, 0.375],
-                bbox=[0.025, 0.04, 0.95, 0.70]  # 底部更靠下，高度略大一点
+                bbox=[0.025, 0.1, 0.95, None]   # height=None 自动适应
             )
             table.auto_set_font_size(False)
-            table.set_fontsize(13.5)    # 和合并页统一字体大小
-            table.scale(1, 2.9)         # 单页无图表，行高可以比合并页稍宽松
-            # 单元格样式循环（和上面一致）
+            table.set_fontsize(10.5)
+            # 不需要 scale，因为 height=None 自动适应
+            
             for (i, j), cell in table.get_celld().items():
                 if i == 0:
                     cell.set_facecolor('#1a3b5c')
                     cell.set_text_props(weight='bold', color='white')
                 else:
                     cell.set_facecolor('#f5f5f5' if i % 2 == 0 else 'white')
+            
             fig_table.text(0.85, 0.02, f"Page 4 of {total_pages}", fontsize=10, color='gray')
             pdf.savefig(fig_table)
             plt.close(fig_table)
