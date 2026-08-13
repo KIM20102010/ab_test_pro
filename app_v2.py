@@ -987,7 +987,6 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
                     continue
                 # ============================================
                 
-                # 生成 PDF，单独捕获PDF异常
                 st.session_state.uploaded_file_name = file.name
                 try:
                     pdf_data, report_id = generate_pdf_report(result)
@@ -999,10 +998,6 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
                 
                 result['pdf_data'] = pdf_data
                 st.session_state.batch_results[file.name] = result
-                
-                except Exception as e:
-                    st.error(f"❌ Error processing {file.name}: {e}")
-                    continue
             status_text.text(f"Processing: {file.name} ({idx+1}/{len(st.session_state.batch_files)})")
             
             try:
