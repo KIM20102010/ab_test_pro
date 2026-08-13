@@ -16,9 +16,8 @@ from supabase import create_client, Client
 import tempfile
 import hashlib
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
-import math  # 新增，用于检查 NaN
 
-# 报告ID计数器
+# 报告ID计数器（用于生成唯一报告编号）
 if "report_counter" not in st.session_state:
     st.session_state.report_counter = 0
 
@@ -72,15 +71,6 @@ if "batch_results" not in st.session_state:
 if "is_processing" not in st.session_state:
     st.session_state.is_processing = False
 
-# ========== 辅助函数 ==========
-def is_valid_number(x):
-    """检查数值是否为有效数字（非None，非NaN）"""
-    if x is None:
-        return False
-    if isinstance(x, float) and math.isnan(x):
-        return False
-    return True
-
 # ========== 认证函数 ==========
 def login(email, password):
     try:
@@ -132,7 +122,10 @@ def check_free_quota():
         except:
             pass
         return True
-    return st.session_state.free_usage_count < FREE_TRIAL_LIMIT
+    if st.session_state.free_usage_count < FREE_TRIAL_LIMIT:
+        return True
+    else:
+        return False
 
 def increment_free_usage():
     if st.session_state.user_plan != 'free':
@@ -163,7 +156,7 @@ def check_webhook_unlock():
     except:
         pass
 
-# ========== 渲染休眠遮罩 ==========
+# ========== 渲染休眠遮罩（防双击） ==========
 if 'first_load' not in st.session_state:
     st.session_state.first_load = True
     with st.spinner("⏳ Waking up the server... This may take up to 20 seconds on first visit."):
@@ -194,18 +187,15 @@ with st.sidebar:
         logout()
     st.markdown("---")
     st.header("⚙️ Controls")
-    
     logo_file = st.file_uploader("Upload Logo (PNG/JPG)", type=['png', 'jpg', 'jpeg'])
     if logo_file:
         st.session_state.logo_img = Image.open(logo_file)
         st.image(st.session_state.logo_img, width=150)
-    
     uploaded_file = st.file_uploader(
         "Upload CSV",
         type=['csv'],
         help="Max 5MB. For large datasets, take a random sample."
     )
-    
     if st.session_state.user_plan in ['starter', 'founder']:
         batch_files = st.file_uploader(
             "Batch Upload (up to 10 files)",
@@ -215,13 +205,11 @@ with st.sidebar:
         )
         if batch_files:
             st.session_state.batch_files = batch_files
-    
     st.session_state.remove_outliers = st.checkbox(
         "Exclude Outliers (IQR method, Listwise Deletion)",
         value=True,
         help="Removes entire rows where any selected column has an outlier."
     )
-    
     st.markdown("---")
     st.subheader("🔓 Plans")
     if st.session_state.unlocked or st.session_state.user_plan != 'free':
@@ -230,7 +218,6 @@ with st.sidebar:
         rem = max(0, FREE_TRIAL_LIMIT - st.session_state.free_usage_count)
         st.info(f"🎁 Free trials left today: {rem}")
     st.markdown("---")
-    
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Free**")
@@ -246,7 +233,6 @@ with st.sidebar:
         st.markdown("- ✅ PDF download")
         st.markdown("- ✅ Logo embed")
         st.markdown("- ❌ Batch upload")
-    
     col3, col4 = st.columns(2)
     with col3:
         st.markdown("**Starter**")
@@ -264,7 +250,6 @@ with st.sidebar:
         st.markdown("- ✅ History (50 reports)")
         st.markdown("- 🔒 Lifetime price lock")
         st.markdown("- 👑 Priority support")
-    
     st.markdown("---")
     if st.session_state.user_plan == 'free':
         if st.button("📄 Single Report ($49)", use_container_width=True):
@@ -281,21 +266,18 @@ def perform_statistical_tests(control, treatment):
     n_c, n_t = len(control), len(treatment)
     m_c, m_t = control.mean(), treatment.mean()
     s_c, s_t = control.std(), treatment.std()
-    
     paired = False
-    w_stat, w_p = None, None
     if n_c == n_t:
         try:
             w_stat, w_p = wilcoxon(treatment, control)
             paired = True
         except:
-            pass
-    
+            w_stat, w_p = None, None
+    else:
+        w_stat, w_p = None, None
     t_stat, p_val = ttest_ind(treatment, control, equal_var=False)
-    
     pooled_std = np.sqrt((s_c**2 + s_t**2) / 2)
-    cohen_d = (m_t - m_c) / pooled_std if pooled_std > 0 else 0.0
-    
+    cohen_d = (m_t - m_c) / pooled_std if pooled_std > 0 else 0
     if abs(cohen_d) >= 0.8:
         effect_label = "Large Effect"
         effect_color = "🟢"
@@ -308,25 +290,20 @@ def perform_statistical_tests(control, treatment):
     else:
         effect_label = "Negligible Effect"
         effect_color = "⚪"
-    
     u_stat, u_p = mannwhitneyu(treatment, control, alternative='two-sided')
     ad_c = anderson(control, dist='norm')
     ad_t = anderson(treatment, dist='norm')
-    
     def calc_power(eff, alpha, n1, n2):
         df_t = n1 + n2 - 2
         ncp = eff * np.sqrt((n1 * n2) / (n1 + n2))
         t_crit = stats.t.ppf(1 - alpha/2, df_t)
         power = 1 - stats.nct.cdf(t_crit, df_t, ncp) + stats.nct.cdf(-t_crit, df_t, ncp)
         return min(max(power, 0), 0.999)
-    
     alpha = 0.05
     current_power = calc_power(cohen_d, alpha, n_c, n_t)
-    
     se_diff = np.sqrt(s_c**2/n_c + s_t**2/n_t)
     ci_low = (m_t - m_c) - 1.96 * se_diff
     ci_high = (m_t - m_c) + 1.96 * se_diff
-    
     if p_val < alpha and current_power > 0.8:
         verdict = f"✅ **Statistically Significant** (p={p_val:.4f}, Power={current_power:.1%})"
     elif p_val < alpha and current_power <= 0.8:
@@ -335,14 +312,12 @@ def perform_statistical_tests(control, treatment):
         verdict = f"❌ **Not Significant** (p={p_val:.4f})"
     else:
         verdict = f"❓ **Inconclusive** (p={p_val:.4f}, Power={current_power:.1%})"
-    
     def calc_mde(alpha, n1, n2, target_power=0.8):
         for d in np.arange(0.01, 3.0, 0.01):
             if calc_power(d, alpha, n1, n2) >= target_power:
                 return d
         return 3.0
     mde = calc_mde(alpha, n_c, n_t)
-    
     return {
         'n_c': n_c, 'n_t': n_t,
         'm_c': m_c, 'm_t': m_t,
@@ -382,13 +357,11 @@ def analyze_single_file(df, filename):
     result['df_clean'] = df_clean
     return result
 
-# ========== 结果展示函数 ==========
 def display_results(result):
     if 'button_counter' not in st.session_state:
         st.session_state.button_counter = 0
     st.session_state.button_counter += 1
     btn_key = f"btn_{st.session_state.button_counter}"
-    
     tab1, tab2, tab3, tab4 = st.tabs(["📈 Metrics", "📊 Distributions", "⚡ Power", "📋 Data"])
     with tab1:
         col1, col2, col3 = st.columns(3)
@@ -400,11 +373,9 @@ def display_results(result):
         col5.metric("Statistical Power", f"{result['current_power']:.1%}")
         col6.metric("MDE (80% Power)", f"{result['mde']:.3f}")
         st.info(result['verdict'])
-        
         fig, ax = plt.subplots(figsize=(10, 1.5))
         diff = result['m_t'] - result['m_c']
-        ax.errorbar(0, 0, xerr=1.96 * np.sqrt(result['s_c']**2/result['n_c'] + result['s_t']**2/result['n_t']),
-                    fmt='o', color='navy', capsize=10, markersize=12)
+        ax.errorbar(0, 0, xerr=1.96 * np.sqrt(result['s_c']**2/result['n_c'] + result['s_t']**2/result['n_t']), fmt='o', color='navy', capsize=10, markersize=12)
         ax.axvline(0, color='red', linestyle='--', alpha=0.7)
         ax.set_xlim(result['ci_low'] - 0.5, result['ci_high'] + 0.5)
         ax.set_yticks([])
@@ -412,7 +383,6 @@ def display_results(result):
         ax.set_title(f"Treatment - Control = {diff:.3f}")
         st.pyplot(fig)
         plt.close()
-    
     with tab2:
         control_data = result['control_data']
         treatment_data = result['treatment_data']
@@ -430,10 +400,11 @@ def display_results(result):
         ax2.set_ylabel('Frequency')
         st.pyplot(fig)
         plt.close()
-    
     with tab3:
         sample_sizes = np.arange(5, 201, 5)
-        powers = [calc_power_curve(result['cohen_d'], result['alpha'], n, n) for n in sample_sizes]
+        powers = []
+        for n in sample_sizes:
+            powers.append(calc_power_curve(result['cohen_d'], result['alpha'], n, n))
         fig, ax = plt.subplots(figsize=(8, 4))
         ax.plot(sample_sizes, powers, 'b-', linewidth=2)
         ax.axhline(0.8, color='red', linestyle='--', alpha=0.7, label='80% Threshold')
@@ -444,31 +415,25 @@ def display_results(result):
         ax.legend()
         st.pyplot(fig)
         plt.close()
-        
         col1, col2 = st.columns(2)
         col1.metric("Current Power", f"{result['current_power']:.1%}")
         col2.metric("MDE (80% Power)", f"{result['mde']:.3f}")
         st.caption(f"To detect effect size d={result['cohen_d']:.2f} with 80% power, aim for ~{int(16 * (1 + 1) / (result['cohen_d']**2))} samples per group.")
-    
     with tab4:
         if 'df_clean' in result:
             st.dataframe(result['df_clean'], use_container_width=True)
-        
         st.markdown("---")
         st.subheader("📄 Report Export")
         if st.session_state.unlocked or st.session_state.user_plan != 'free':
             if st.button("📥 Generate PDF Report", type="primary", key=f"gen_pdf_{btn_key}"):
                 pdf_data, report_id = generate_pdf_report(result)
-                if pdf_data:
-                    st.download_button(
-                        label="⬇️ Download PDF",
-                        data=pdf_data,
-                        file_name=f"ABTest_{st.session_state.uploaded_file_name.replace('.csv','')}_{report_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf",
-                        mime="application/pdf",
-                        key=f"download_pdf_{btn_key}"
-                    )
-                else:
-                    st.error("PDF generation failed due to invalid data.")
+                st.download_button(
+                    label="⬇️ Download PDF",
+                    data=pdf_data,
+                    file_name=f"ABTest_{st.session_state.uploaded_file_name.replace('.csv','')}_{report_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf",
+                    mime="application/pdf",
+                    key=f"download_pdf_{btn_key}"
+                )
         else:
             st.button(
                 label="🔒 Upgrade to Unlock PDF Report",
@@ -487,27 +452,16 @@ def calc_power_curve(effect, alpha, n1, n2):
 
 # ========== PDF生成函数 ==========
 def generate_pdf_report(result):
-    # 检查必要字段是否为有效数字
     required = ['m_c', 'm_t', 'cohen_d', 'alpha', 'current_power']
     for key in required:
-        if key not in result or not is_valid_number(result[key]):
+        if key not in result or result[key] is None:
             return b"", "ERROR"
-    
     buffer = io.BytesIO()
     st.session_state.report_counter += 1
     report_id = f"RPT-{datetime.now().strftime('%Y%m%d')}-{st.session_state.report_counter:04d}"
-    
-    # 安全计算 lift（防止除零）
-    m_c = result['m_c']
-    m_t = result['m_t']
-    if abs(m_c) > 1e-9:
-        lift = (m_t - m_c) / abs(m_c)
-    else:
-        lift = 0.0
-    
+    lift = (result['m_t'] - result['m_c']) / abs(result['m_c']) if result['m_c'] != 0 else 0
     is_significant = result['p_val'] < 0.05
     is_powered = result['current_power'] > 0.8
-    
     if is_significant and is_powered:
         rec_line1 = "[PASS] Rollout to 100% – treatment shows"
         rec_line2 = "statistically significant and practical significance."
@@ -517,12 +471,9 @@ def generate_pdf_report(result):
     else:
         rec_line1 = "[FAIL] Stop or iterate – no significant"
         rec_line2 = "difference detected with sufficient power."
-    
     project_name = st.session_state.uploaded_file_name or 'Untitled'
-    
     control_data = result['control_data']
     treatment_data = result['treatment_data']
-    
     stats_control = {
         'N': len(control_data),
         'Mean': np.mean(control_data),
@@ -543,7 +494,6 @@ def generate_pdf_report(result):
         'Min': np.min(treatment_data),
         'Max': np.max(treatment_data)
     }
-    
     table_data = [
         ['Metric', 'Control', 'Treatment'],
         ['N', f"{stats_control['N']}", f"{stats_treatment['N']}"],
@@ -555,30 +505,23 @@ def generate_pdf_report(result):
         ['Min', f"{stats_control['Min']:.4f}", f"{stats_treatment['Min']:.4f}"],
         ['Max', f"{stats_control['Max']:.4f}", f"{stats_treatment['Max']:.4f}"],
     ]
-    
-    # ========== 动态分页判断 ==========
     PAGE_WIDTH = 210
     PAGE_HEIGHT = 297
     PAGE_MARGIN_TOP = 25
     PAGE_MARGIN_BOTTOM = 25
     available_height = PAGE_HEIGHT - PAGE_MARGIN_TOP - PAGE_MARGIN_BOTTOM
-    
     CURVE_HEIGHT = 100
     TABLE_ROW_HEIGHT = 5.5
     n_rows = len(table_data)
     table_height = n_rows * TABLE_ROW_HEIGHT
-    
     if table_height + CURVE_HEIGHT <= available_height:
         total_pages = 3
         use_combined = True
     else:
         total_pages = 4
         use_combined = False
-    
     header_text = f"A/B TEST ANALYSIS REPORT  |  Report ID: {report_id}  |  Confidential"
-    
     with pdf_backend.PdfPages(buffer, 'wb') as pdf:
-        # ---------- 第一页：封面 ----------
         fig1 = plt.figure(figsize=(8.5, 11))
         fig1.text(0.05, 0.97, header_text, fontsize=9, color='gray')
         if st.session_state.logo_img:
@@ -591,8 +534,13 @@ def generate_pdf_report(result):
                 new_height = int(orig_height * ratio)
                 logo_resized = st.session_state.logo_img.resize((new_width, new_height), Image.LANCZOS)
                 img_box = OffsetImage(logo_resized, zoom=1)
-                ab = AnnotationBbox(img_box, xy=(0.12, 0.962), xycoords='figure fraction',
-                                    box_alignment=(0, 1), frameon=False)
+                ab = AnnotationBbox(
+                    img_box,
+                    xy=(0.12, 0.962),
+                    xycoords='figure fraction',
+                    box_alignment=(0, 1),
+                    frameon=False
+                )
                 fig1.add_artist(ab)
             except Exception as e:
                 print(f"Logo 加载失败: {e}")
@@ -600,34 +548,31 @@ def generate_pdf_report(result):
         plt.text(0.12, 0.77, f"Report ID: {report_id}", fontsize=12, color='gray', transform=fig1.transFigure)
         plt.text(0.12, 0.73, f"Project: {project_name}", fontsize=13, transform=fig1.transFigure)
         plt.text(0.12, 0.69, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", fontsize=11, color='gray', transform=fig1.transFigure)
-        
         plt.text(0.12, 0.62, "EXECUTIVE SUMMARY", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
         summary_line1 = f"Treatment outperforms Control by {lift*100:.1f}%"
         summary_line2 = f"(p={result['p_val']:.4f}, Power={result['current_power']:.1%})"
         summary_color = '#2E7D32' if is_significant and is_powered else '#C62828'
         plt.text(0.12, 0.57, summary_line1, fontsize=16, weight='bold', color=summary_color, transform=fig1.transFigure)
         plt.text(0.12, 0.53, summary_line2, fontsize=14, color=summary_color, transform=fig1.transFigure)
-        
         plt.text(0.12, 0.45, "KEY METRICS", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
         plt.text(0.12, 0.40, f"Difference: {result['m_t']-result['m_c']:.4f}  |  95% CI: [{result['ci_low']:.4f}, {result['ci_high']:.4f}]", fontsize=13, transform=fig1.transFigure)
         plt.text(0.12, 0.36, f"P-Value: {result['p_val']:.5f}  |  Cohen's d: {result['cohen_d']:.3f} ({result['effect_label']})", fontsize=13, transform=fig1.transFigure)
         plt.text(0.12, 0.32, f"Statistical Power: {result['current_power']:.1%}  |  MDE: {result['mde']:.3f}", fontsize=13, transform=fig1.transFigure)
-        
         if result['current_power'] < 0.8:
             plt.text(0.12, 0.26, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (result['cohen_d']**2))} samples per group for 80% power.", fontsize=11, color='#C62828', transform=fig1.transFigure)
-        
         plt.text(0.12, 0.24, "RECOMMENDED ACTION", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
         plt.text(0.12, 0.20, rec_line1, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
         plt.text(0.12, 0.16, rec_line2, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-        
         plt.text(0.12, 0.06, "Confidential — for internal use only", fontsize=10, color='gray', transform=fig1.transFigure)
         plt.text(0.85, 0.06, f"Page 1 of {total_pages}", fontsize=10, color='gray', transform=fig1.transFigure)
         plt.axis('off')
         pdf.savefig(fig1)
         plt.close(fig1)
-        
-        # ---------- 第二页：箱线图 + 直方图 ----------
-        fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=(8.5, 11), gridspec_kw={'hspace': 0.3})
+        fig2, (ax1, ax2) = plt.subplots(
+            2, 1,
+            figsize=(8.5, 11),
+            gridspec_kw={'hspace': 0.3}
+        )
         fig2.text(0.05, 0.97, header_text, fontsize=9, color='gray')
         fig2.text(0.5, 0.94, "Distribution Comparison: Box Plot & Histogram", fontsize=14, weight='bold', ha='center', transform=fig2.transFigure)
         bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
@@ -644,14 +589,15 @@ def generate_pdf_report(result):
         plt.text(0.85, 0.02, f"Page 2 of {total_pages}", fontsize=10, color='gray', transform=fig2.transFigure)
         pdf.savefig(fig2)
         plt.close(fig2)
-        
-        # ---------- 第三页（合并）或分页 ----------
         if use_combined:
             fig_combined, (ax_curve, ax_table) = plt.subplots(
-                2, 1, figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4),
-                gridspec_kw={'height_ratios': [CURVE_HEIGHT, table_height], 'hspace': 0.2}
+                2, 1,
+                figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4),
+                gridspec_kw={
+                    'height_ratios': [CURVE_HEIGHT, table_height],
+                    'hspace': 0.2
+                }
             )
-            # 曲线
             target_power = 0.8
             def find_sample_size_for_power(effect, alpha, target_power=0.8, max_n=5000):
                 for n in range(10, max_n, 5):
@@ -696,12 +642,16 @@ def generate_pdf_report(result):
                 note = f"Power {result['current_power']:.1%}; {needed_n} samples/group recommended."
             ax_curve.text(0.02, 0.02, note, fontsize=8, color='#333333',
                           transform=ax_curve.transAxes, ha='left', va='bottom', wrap=True)
-            # 表格
             ax_table.axis('off')
             ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
             ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
-            table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
-                                   colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.1, 0.95, None])
+            table = ax_table.table(
+                cellText=table_data,
+                loc='center',
+                cellLoc='center',
+                colWidths=[0.25, 0.375, 0.375],
+                bbox=[0.025, 0.1, 0.95, None]
+            )
             table.auto_set_font_size(False)
             table.set_fontsize(10.5)
             for (i, j), cell in table.get_celld().items():
@@ -715,7 +665,6 @@ def generate_pdf_report(result):
             pdf.savefig(fig_combined)
             plt.close(fig_combined)
         else:
-            # 分页：曲线页
             fig_curve = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
             ax_curve = fig_curve.add_subplot(111)
             target_power = 0.8
@@ -755,7 +704,7 @@ def generate_pdf_report(result):
                           transform=ax_curve.transAxes, ha='left', va='top',
                           bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
             if result['cohen_d'] < 0.2 and needed_n > 500:
-                note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re-evaluating the experiment design."
+                note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re‑evaluating the experiment design."
             elif needed_n > 200:
                 note = f"To reach 80% power, you need about {needed_n} samples per group. This may require extending the collection period."
             else:
@@ -766,16 +715,19 @@ def generate_pdf_report(result):
             fig_curve.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray')
             pdf.savefig(fig_curve)
             plt.close(fig_curve)
-            
-            # 表格页
             fig_table = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
             ax_table = fig_table.add_subplot(111)
             ax_table.axis('off')
             fig_table.text(0.05, 0.96, header_text, fontsize=9, color='gray')
             ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
             ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
-            table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
-                                   colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.1, 0.95, None])
+            table = ax_table.table(
+                cellText=table_data,
+                loc='center',
+                cellLoc='center',
+                colWidths=[0.25, 0.375, 0.375],
+                bbox=[0.025, 0.1, 0.95, None]
+            )
             table.auto_set_font_size(False)
             table.set_fontsize(10.5)
             for (i, j), cell in table.get_celld().items():
@@ -787,7 +739,6 @@ def generate_pdf_report(result):
             fig_table.text(0.85, 0.02, f"Page 4 of {total_pages}", fontsize=10, color='gray')
             pdf.savefig(fig_table)
             plt.close(fig_table)
-    
     buffer.seek(0)
     st.session_state.last_report_id = report_id
     return buffer.getvalue(), report_id
@@ -795,10 +746,9 @@ def generate_pdf_report(result):
 # ========== 主逻辑 ==========
 st.title("📊 A/B Test Pro")
 st.markdown("**Upload your CSV to automatically compute statistical significance, power curves, and professional PDF reports.**")
-
 check_webhook_unlock()
 
-# ========== 数据上传处理 ==========
+# ========== 批量模式 ==========
 if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'founder']:
     st.subheader(f"📂 Batch Processing: {len(st.session_state.batch_files)} files")
     if st.button("🚀 Run Batch Analysis"):
@@ -807,46 +757,57 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
         progress_bar = st.progress(0)
         status_text = st.empty()
         total_files = len(st.session_state.batch_files)
-        
         for idx, file in enumerate(st.session_state.batch_files):
             status_text.text(f"Processing: {file.name} ({idx+1}/{total_files})")
+            # ========== 【修复重点】大try，处理单个文件全部逻辑 ==========
             try:
                 df = pd.read_csv(file).fillna(np.nan)
                 if df.empty or df.columns.empty:
                     st.warning(f"⚠️ Skipping {file.name}: file is empty or has no columns.")
+                    progress_bar.progress((idx + 1) / total_files)
                     continue
                 numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
                 if len(numeric_cols) < 2:
                     st.warning(f"⚠️ Skipping {file.name}: need at least 2 numeric columns.")
+                    progress_bar.progress((idx + 1) / total_files)
                     continue
                 result = analyze_single_file(df, file.name)
                 if 'error' in result:
                     st.warning(f"⚠️ Skipping {file.name}: {result['error']}")
+                    progress_bar.progress((idx + 1) / total_files)
                     continue
-                # 校验关键字段是否为有效数字
+                # None转np.nan，规避计算报错
+                for k, v in result.items():
+                    if v is None:
+                        result[k] = np.nan
                 required_keys = ['m_c', 'm_t', 'cohen_d', 'alpha', 'current_power']
-                if any(key not in result or not is_valid_number(result[key]) for key in required_keys):
-                    st.error(f"❌ Skipping {file.name}: computed value is invalid (NaN/None), cannot render PDF")
-                    st.session_state.batch_results[file.name] = {"error": "invalid computed value"}
+                if any(key not in result or pd.isna(result[key]) for key in required_keys):
+                    st.error(f"❌ Skipping {file.name}: computed value is None, cannot render PDF")
+                    st.session_state.batch_results[file.name] = {"error": "computed value is None"}
+                    progress_bar.progress((idx + 1) / total_files)
                     continue
                 st.session_state.uploaded_file_name = file.name
-                pdf_data, report_id = generate_pdf_report(result)
-                if not pdf_data:
-                    st.error(f"❌ Skipping {file.name}: PDF generation returned empty data.")
-                    st.session_state.batch_results[file.name] = {"error": "PDF generation failed"}
+                # PDF内层独立try‑except
+                try:
+                    pdf_data, report_id = generate_pdf_report(result)
+                except Exception as pdf_e:
+                    st.error(f"❌ Skipping {file.name}: pdf generate error: {str(pdf_e)}")
+                    st.session_state.batch_results[file.name] = {"error": str(pdf_e)}
+                    progress_bar.progress((idx + 1) / total_files)
                     continue
                 result['pdf_data'] = pdf_data
                 st.session_state.batch_results[file.name] = result
+            # ========== 和上面try严格对齐的except，捕获该文件所有其他异常 ==========
             except Exception as e:
                 st.error(f"❌ Error processing {file.name}: {str(e)}")
                 st.session_state.batch_results[file.name] = {"error": str(e)}
+            # 无论成功失败，更新进度，进入下一个文件
             progress_bar.progress((idx + 1) / total_files)
-        
         status_text.text("✅ Batch analysis complete!")
         st.session_state.is_processing = False
         st.session_state.analysis_done = True
         st.rerun()
-    
+
     if st.session_state.analysis_done and st.session_state.batch_results:
         tabs = st.tabs([name for name in st.session_state.batch_results.keys()])
         for tab, (name, result) in zip(tabs, st.session_state.batch_results.items()):
@@ -863,122 +824,13 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
                     zip_buffer = io.BytesIO()
                     with zipfile.ZipFile(zip_buffer, 'w') as zf:
                         for name, pdf_data in valid_pdfs.items():
-                            pdf_filename = f"ABTest_{name.replace('.csv','')}_{datetime.now().strftime('%Y%m%d')}.pdf"
-                            zf.writestr(pdf_filename, pdf_data)
-                    zip_buffer.seek(0)
-                    st.download_button(
-                        label="⬇️ Download ZIP",
-                        data=zip_buffer,
-                        file_name=f"ABTest_Batch_{datetime.now().strftime('%Y%m%d')}.zip",
-                        mime="application/zip",
-                        key="download_all_zip"
-                    )
-            else:
-                st.info("ℹ️ No valid PDFs generated in this batch.")
-    st.stop()
-
-# ========== 单文件模式 ==========
-elif uploaded_file is not None:
-    if uploaded_file.size > MAX_FILE_SIZE:
-        st.error(f"❌ File exceeds 5MB limit. Current size: {uploaded_file.size/1024/1024:.1f}MB. Please sample your data.")
-        st.stop()
-    
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp_file:
-        tmp_file.write(uploaded_file.getvalue())
-        tmp_path = tmp_file.name
-    
-    try:
-        df = pd.read_csv(tmp_path)
-        st.session_state.uploaded_file_name = uploaded_file.name
-    except Exception as e:
-        st.error(f"Error reading CSV: {e}")
-        os.unlink(tmp_path)
-        st.stop()
-    
-    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    if len(numeric_cols) < 2:
-        st.error("❌ Need at least 2 numeric columns for analysis.")
-        os.unlink(tmp_path)
-        st.stop()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        control_col = st.selectbox("Control Group (numeric)", numeric_cols, key="ctrl")
-    with col2:
-        treatment_col = st.selectbox("Treatment Group (numeric)", numeric_cols, key="trt")
-    
-    if control_col == treatment_col:
-        st.warning("⚠️ Control and Treatment columns must be different.")
-        os.unlink(tmp_path)
-        st.stop()
-    
-    if st.button("📊 Run Analysis", type="primary"):
-        if st.session_state.user_plan == 'free' and not check_free_quota():
-            st.warning(f"🔒 Free trial limit reached ({FREE_TRIAL_LIMIT} per day). Please upgrade to continue.")
-            os.unlink(tmp_path)
-            st.stop()
-        
-        with st.spinner("🧹 Cleaning data and running analysis..."):
-            df_clean = df[[control_col, treatment_col]].copy().dropna()
-            if st.session_state.remove_outliers:
-                Q1 = df_clean.quantile(0.25)
-                Q3 = df_clean.quantile(0.75)
-                IQR = Q3 - Q1
-                mask = ~((df_clean < (Q1 - 1.5 * IQR)) | (df_clean > (Q3 + 1.5 * IQR))).any(axis=1)
-                removed = len(df_clean) - mask.sum()
-                df_clean = df_clean[mask]
-                if removed > 0:
-                    st.info(f"🧹 Removed {removed} rows with outliers (Listwise Deletion).")
-            control_data = df_clean[control_col].dropna()
-            treatment_data = df_clean[treatment_col].dropna()
-            if len(control_data) < 3 or len(treatment_data) < 3:
-                st.error("❌ Need at least 3 valid samples per group.")
-                os.unlink(tmp_path)
-                st.stop()
-            
-            result = perform_statistical_tests(control_data, treatment_data)
-            result['control_col'] = control_col
-            result['treatment_col'] = treatment_col
-            result['control_data'] = control_data
-            result['treatment_data'] = treatment_data
-            result['df_clean'] = df_clean
-            result['removed_outliers'] = removed if st.session_state.remove_outliers else 0
-            
-            if st.session_state.user_plan == 'free':
-                increment_free_usage()
-            
-            st.session_state.analysis_result = result
-            st.session_state.analysis_done = True
-            st.rerun()
-        
-        os.unlink(tmp_path)
-    
-    if st.session_state.analysis_done and hasattr(st.session_state, 'analysis_result'):
-        display_results(st.session_state.analysis_result)
-    
-    try:
-        os.unlink(tmp_path)
-    except:
-        pass
-
-else:
-    st.info("👈 Please upload a CSV file to begin.")
-    with st.expander("📖 CSV Format Example"):
-        st.code("""
-Group,Control,Treatment
-A,23.5,28.1
-A,22.0,27.5
-B,24.1,29.2
-B,21.8,26.8
-        """, language="csv")
-    with st.expander("📥 Download Template CSV"):
-        template_df = pd.DataFrame({
-            "Group": ["A", "A", "B", "B"],
-            "Control": [23.5, 22.0, 24.1, 21.8],
-            "Treatment": [28.1, 27.5, 29.2, 26.8]
-        })
-        csv_data = template_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("⬇️ Download Template", data=csv_data, file_name="template.csv", mime="text/csv")
-
-st.markdown("---")
-st.caption(f"📌 All data processed locally. No data uploaded. © {datetime.now().year} A/B Test Pro")
+                            pdf_filename = f"ABTest_{name.replace('.csv', '')}.pdf"
+                            pdf_data = generate_pdf_report(dataframe)
+                            
+                            st.download_button(
+                                label="Download PDF Report",
+                                data=pdf_data,
+                                file_name=pdf_filename,
+                                mime="application/pdf",
+                                key=f"dl_pdf_{name}"
+                            )
