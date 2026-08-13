@@ -500,9 +500,12 @@ def generate_pdf_report(result):
     # 安全计算 lift（防止除零）
     m_c = result['m_c']
     m_t = result['m_t']
-    if abs(m_c) > 1e-9:
-        lift = (m_t - m_c) / abs(m_c)
-    else:
+    try:
+        if abs(m_c) > 1e-9:
+            lift = (m_t - m_c) / abs(m_c)
+        else:
+            lift = 0.0
+    except (TypeError, ZeroDivisionError):
         lift = 0.0
     
     is_significant = result['p_val'] < 0.05
