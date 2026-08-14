@@ -498,16 +498,19 @@ def generate_pdf_report(result):
             except:
                 raise ValueError(f"Field '{field_name}' cannot be converted to float (type: {type(x)})")
         
-        # 提取并转换所有关键数值字段
+        # 提取并转换所有关键数值字段（含标准差）
         m_c = to_float(result.get('m_c'), 'm_c')
         m_t = to_float(result.get('m_t'), 'm_t')
+        s_c = to_float(result.get('s_c'), 's_c')
+        s_t = to_float(result.get('s_t'), 's_t')
         cohen_d = to_float(result.get('cohen_d'), 'cohen_d')
         alpha = to_float(result.get('alpha'), 'alpha')
         current_power = to_float(result.get('current_power'), 'current_power')
         p_val = to_float(result.get('p_val'), 'p_val')
-        ci_low = to_float(result.get('ci_low'), 'ci_low')      # ← 新增
-        ci_high = to_float(result.get('ci_high'), 'ci_high')  # ← 新增
+        ci_low = to_float(result.get('ci_low'), 'ci_low')
+        ci_high = to_float(result.get('ci_high'), 'ci_high')
         
+        # 检查数据
         control_data = result.get('control_data')
         treatment_data = result.get('treatment_data')
         if control_data is None or treatment_data is None or len(control_data) < 2 or len(treatment_data) < 2:
@@ -517,6 +520,7 @@ def generate_pdf_report(result):
         st.session_state.report_counter += 1
         report_id = f"RPT-{datetime.now().strftime('%Y%m%d')}-{st.session_state.report_counter:04d}"
         
+        # 安全计算 lift
         lift = (m_t - m_c) / abs(m_c) if abs(m_c) > 1e-9 else 0.0
         is_significant = p_val < 0.05
         is_powered = current_power > 0.8
@@ -798,10 +802,12 @@ def generate_pdf_report(result):
     
     except Exception as e:
         import traceback
-        st.error(f"❌ PDF generation error: {str(e)}")
+        # 使用 st.exception 显示完整堆栈，不会折叠
+        st.exception(e)
         st.error(f"Result keys: {list(result.keys())}")
-        st.error(f"m_c={result.get('m_c')}, m_t={result.get('m_t')}, cohen_d={result.get('cohen_d')}, alpha={result.get('alpha')}, power={result.get('current_power')}")
-        st.error(f"ci_low={result.get('ci_low')}, ci_high={result.get('ci_high')}")  # ← 新增
+        st.error(f"m_c={result.get('m_c')}, m_t={result.get('m_t')}, s_c={result.get('s_c')}, s_t={result.get('s_t')}, cohen_d={result.get('cohen_d')}, alpha={result.get('alpha')}, power={result.get('current_power')}")
+        st.error(f"ci_low={result.get('ci_low')}, ci_high={result.get('ci_high')}")
+        # 打印到日志
         print(traceback.format_exc())
         return b"", "ERROR"
 # ========== 主逻辑 ==========
