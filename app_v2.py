@@ -498,12 +498,15 @@ def generate_pdf_report(result):
             except:
                 raise ValueError(f"Field '{field_name}' cannot be converted to float (type: {type(x)})")
         
+        # 提取并转换所有关键数值字段
         m_c = to_float(result.get('m_c'), 'm_c')
         m_t = to_float(result.get('m_t'), 'm_t')
         cohen_d = to_float(result.get('cohen_d'), 'cohen_d')
         alpha = to_float(result.get('alpha'), 'alpha')
         current_power = to_float(result.get('current_power'), 'current_power')
         p_val = to_float(result.get('p_val'), 'p_val')
+        ci_low = to_float(result.get('ci_low'), 'ci_low')      # ← 新增
+        ci_high = to_float(result.get('ci_high'), 'ci_high')  # ← 新增
         
         control_data = result.get('control_data')
         treatment_data = result.get('treatment_data')
@@ -530,7 +533,7 @@ def generate_pdf_report(result):
         
         project_name = st.session_state.uploaded_file_name or 'Untitled'
         
-        # 计算描述统计表（保持不变）
+        # 描述统计表
         stats_control = {
             'N': len(control_data),
             'Mean': np.mean(control_data),
@@ -613,7 +616,7 @@ def generate_pdf_report(result):
             plt.text(0.12, 0.57, summary_line1, fontsize=16, weight='bold', color=summary_color, transform=fig1.transFigure)
             plt.text(0.12, 0.53, summary_line2, fontsize=14, color=summary_color, transform=fig1.transFigure)
             plt.text(0.12, 0.45, "KEY METRICS", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-            plt.text(0.12, 0.40, f"Difference: {m_t-m_c:.4f}  |  95% CI: [{result['ci_low']:.4f}, {result['ci_high']:.4f}]", fontsize=13, transform=fig1.transFigure)
+            plt.text(0.12, 0.40, f"Difference: {m_t-m_c:.4f}  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]", fontsize=13, transform=fig1.transFigure)
             plt.text(0.12, 0.36, f"P-Value: {p_val:.5f}  |  Cohen's d: {cohen_d:.3f} ({result['effect_label']})", fontsize=13, transform=fig1.transFigure)
             plt.text(0.12, 0.32, f"Statistical Power: {current_power:.1%}  |  MDE: {result['mde']:.3f}", fontsize=13, transform=fig1.transFigure)
             if current_power < 0.8:
@@ -796,10 +799,9 @@ def generate_pdf_report(result):
     except Exception as e:
         import traceback
         st.error(f"❌ PDF generation error: {str(e)}")
-        # 输出关键字段帮助定位
         st.error(f"Result keys: {list(result.keys())}")
         st.error(f"m_c={result.get('m_c')}, m_t={result.get('m_t')}, cohen_d={result.get('cohen_d')}, alpha={result.get('alpha')}, power={result.get('current_power')}")
-        # 打印堆栈跟踪（在日志中可见）
+        st.error(f"ci_low={result.get('ci_low')}, ci_high={result.get('ci_high')}")  # ← 新增
         print(traceback.format_exc())
         return b"", "ERROR"
 # ========== 主逻辑 ==========
