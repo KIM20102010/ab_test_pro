@@ -596,16 +596,19 @@ def generate_pdf_report(result):
         # 【关键修改点 1】: 定义通用的辅助函数，将 Matplotlib 图形转为 Pillow 图片对象
         # ==========================================
         def fig_to_pil_image(fig, dpi=300):
-            """
-            将 Matplotlib 的 Figure 对象渲染为 Pillow Image 对象。
-            这能彻底避开 Matplotlib 原生 PDF 引擎(Bug来源)的渲染问题。
-            """
             temp_buf = io.BytesIO()
-            fig.savefig(temp_buf, format='png', dpi=dpi, bbox_inches='tight')
+            try:
+                # 正常尝试保存，包含紧贴的边框
+                fig.savefig(temp_buf, format='png', dpi=dpi, bbox_inches='tight')
+            except Exception:
+                # 如果 `bbox_inches='tight'` 计算失败（导致外部尺寸是 None），
+                # 就降级为不使用紧贴边框保存，保证程序绝对不会崩溃
+                temp_buf = io.BytesIO()
+                fig.savefig(temp_buf, format='png', dpi=dpi)
             temp_buf.seek(0)
-            img = Image.open(temp_buf).convert('RGB')  # 必须转 RGB，否则存 PDF 会报错
+            img = Image.open(temp_buf).convert('RGB')
             temp_buf.close()
-            plt.close(fig) # 及时释放 Matplotlib 的内存
+            plt.close(fig)
             return img
         
         # 收集所有 PDF 页面图片对象的列表
@@ -727,7 +730,7 @@ def generate_pdf_report(result):
             ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
             ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
             table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
-                                   colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.1, 0.95, None])
+                                   colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.2, 0.95, 0.65])
             table.auto_set_font_size(False)
             table.set_fontsize(10.5)
             for (i, j), cell in table.get_celld().items():
@@ -800,7 +803,7 @@ def generate_pdf_report(result):
             ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
             ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
             table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
-                                   colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.1, 0.95, None])
+                                   colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.15, 0.95, 0.75])
             table.auto_set_font_size(False)
             table.set_fontsize(10.5)
             for (i, j), cell in table.get_celld().items():
