@@ -595,7 +595,7 @@ def generate_pdf_report(result):
         # ==========================================
         # 【核心修改点】：使用高质量的缩放方案转存图片
         # ==========================================
-        def fig_to_pil_image(fig, dpi=150):
+        def fig_to_pil_image(fig, dpi=300):
             """
             将 Matplotlib 的 Figure 对象渲染为 Pillow Image 对象。
             使用 150 DPI 保证清晰度，并使用 LANCZOS 算法强制缩放至标准 A4 大小 (595 x 842 点)。
@@ -642,7 +642,7 @@ def generate_pdf_report(result):
                 new_height = int(orig_height * ratio)
                 logo_resized = st.session_state.logo_img.resize((new_width, new_height), Image.LANCZOS)
                 img_box = OffsetImage(logo_resized, zoom=1)
-                ab = AnnotationBbox(img_box, xy=(0.12, 0.89), xycoords='figure fraction',
+                ab = AnnotationBbox(img_box, xy=(0.12, 0.91), xycoords='figure fraction',
                                     box_alignment=(0, 1), frameon=False)
                 fig1.add_artist(ab)
             except Exception as e:
@@ -840,7 +840,7 @@ def generate_pdf_report(result):
                 save_all=True,
                 append_images=pdf_pages_images[1:],
                 format='PDF',
-                quality=95  # 控制 PDF 里的图片质量
+                quality=100  # 控制 PDF 里的图片质量
             )
         
         buffer.seek(0)
