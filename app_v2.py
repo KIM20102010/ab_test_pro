@@ -593,22 +593,37 @@ def generate_pdf_report(result):
         header_text = f"A/B TEST ANALYSIS REPORT  |  Report ID: {report_id}  |  Confidential"
 
         # ==========================================
-        # 【关键修改点 1】: 定义通用的辅助函数，将 Matplotlib 图形转为 Pillow 图片对象
+        # 【核心修改点】：使用高质量的缩放方案转存图片
         # ==========================================
-        def fig_to_pil_image(fig, dpi=300):
+        def fig_to_pil_image(fig, dpi=150):
+            """
+            将 Matplotlib 的 Figure 对象渲染为 Pillow Image 对象。
+            使用 150 DPI 保证清晰度，并使用 LANCZOS 算法强制缩放至标准 A4 大小 (595 x 842 点)。
+            """
             temp_buf = io.BytesIO()
             try:
-                # 正常尝试保存，包含紧贴的边框
                 fig.savefig(temp_buf, format='png', dpi=dpi, bbox_inches='tight')
             except Exception:
-                # 如果 `bbox_inches='tight'` 计算失败（导致外部尺寸是 None），
-                # 就降级为不使用紧贴边框保存，保证程序绝对不会崩溃
+                # 兜底：如果 tight 排版失败，使用默认布局
                 temp_buf = io.BytesIO()
                 fig.savefig(temp_buf, format='png', dpi=dpi)
+            
             temp_buf.seek(0)
             img = Image.open(temp_buf).convert('RGB')
             temp_buf.close()
-            plt.close(fig)
+            plt.close(fig) # 及时释放 Matplotlib 内存
+
+            # 强制缩放为标准 A4 PDF 的物理尺寸 (595 x 842 点)
+            target_w, target_h = 595, 842
+            orig_w, orig_h = img.size
+            # 计算比例，确保图片不变形
+            ratio = min(target_w / orig_w, target_h / orig_h)
+            
+            # 只有当尺寸差得远时才进行缩放，保证画质
+            if abs(ratio - 1.0) > 0.01:
+                new_w, new_h = int(orig_w * ratio), int(orig_h * ratio)
+                img = img.resize((new_w, new_h), Image.LANCZOS)
+            
             return img
         
         # 收集所有 PDF 页面图片对象的列表
@@ -627,7 +642,7 @@ def generate_pdf_report(result):
                 new_height = int(orig_height * ratio)
                 logo_resized = st.session_state.logo_img.resize((new_width, new_height), Image.LANCZOS)
                 img_box = OffsetImage(logo_resized, zoom=1)
-                ab = AnnotationBbox(img_box, xy=(0.12, 0.962), xycoords='figure fraction',
+                ab = AnnotationBbox(img_box, xy=(0.12, 0.89), xycoords='figure fraction',
                                     box_alignment=(0, 1), frameon=False)
                 fig1.add_artist(ab)
             except Exception as e:
@@ -725,12 +740,12 @@ def generate_pdf_report(result):
                 note = f"Power {current_power:.1%}; {needed_n} samples/group recommended."
             ax_curve.text(0.02, 0.02, note, fontsize=8, color='#333333',
                           transform=ax_curve.transAxes, ha='left', va='bottom', wrap=True)
-            # 表格
+            # 表格（修复了空 bbox 导致的崩溃，显式赋予固定高度）
             ax_table.axis('off')
             ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
             ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
             table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
-                                   colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.2, 0.95, 0.65])
+                                   colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.12, 0.95, 0.60])
             table.auto_set_font_size(False)
             table.set_fontsize(10.5)
             for (i, j), cell in table.get_celld().items():
@@ -795,7 +810,7 @@ def generate_pdf_report(result):
             fig_curve.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray')
             pdf_pages_images.append(fig_to_pil_image(fig_curve))
             
-            # 表格页
+            # 表格页（同样修复了空 bbox 导致的崩溃）
             fig_table = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
             ax_table = fig_table.add_subplot(111)
             ax_table.axis('off')
@@ -803,7 +818,7 @@ def generate_pdf_report(result):
             ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
             ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
             table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
-                                   colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.15, 0.95, 0.75])
+                                   colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.08, 0.95, 0.62])
             table.auto_set_font_size(False)
             table.set_fontsize(10.5)
             for (i, j), cell in table.get_celld().items():
@@ -816,7 +831,7 @@ def generate_pdf_report(result):
             pdf_pages_images.append(fig_to_pil_image(fig_table))
 
         # ==========================================
-        # 【关键修改点 2】: 使用 Pillow 将收集到的所有 PNG 图片合并导出为一份 PDF
+        # 使用 Pillow 将所有 PNG 合并为 PDF
         # ==========================================
         if pdf_pages_images:
             # 取出第一张作为基准，后续的图片追加上去
