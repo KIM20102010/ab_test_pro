@@ -616,7 +616,7 @@ def generate_pdf_report(result):
                     new_height = int(orig_height * ratio)
                     logo_resized = st.session_state.logo_img.resize((new_width, new_height), Image.LANCZOS)
                     img_box = OffsetImage(logo_resized, zoom=1)
-                    ab = AnnotationBbox(img_box, xy=(0.12, 0.94), xycoords='figure fraction',
+                    ab = AnnotationBbox(img_box, xy=(0.12, 0.945), xycoords='figure fraction',
                                         box_alignment=(0, 1), frameon=False)
                     fig1.add_artist(ab)
                 except Exception as e:
