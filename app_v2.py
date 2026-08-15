@@ -22,7 +22,6 @@ import math
 # ==========【全局rc配置，放在所有import之后，st.set_page_config之前】==========
 plt.rcParams['pdf.fonttype'] = 42    # TrueType矢量字体，PDF内文字可复制
 plt.rcParams['ps.fonttype'] = 42
-plt.rcParams['text.antialias'] = True
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['figure.dpi'] = 100
 
