@@ -16,7 +16,15 @@ from supabase import create_client, Client
 import tempfile
 import hashlib
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+from matplotlib.backends.backend_pdf import PdfPages
 import math
+
+# ==========【全局rc配置，放在所有import之后，st.set_page_config之前】==========
+plt.rcParams['pdf.fonttype'] = 42    # TrueType矢量字体，PDF内文字可复制
+plt.rcParams['ps.fonttype'] = 42
+plt.rcParams['text.antialias'] = True
+plt.rcParams['axes.unicode_minus'] = False
+plt.rcParams['figure.dpi'] = 100
 
 # ========== 辅助函数 ==========
 def is_valid_number(x):
@@ -497,7 +505,7 @@ def generate_pdf_report(result):
                 return float(x)
             except:
                 raise ValueError(f"Field '{field_name}' cannot be converted to float (type: {type(x)})")
-        
+
         # 提取并转换所有关键数值字段（含标准差）
         m_c = to_float(result.get('m_c'), 'm_c')
         m_t = to_float(result.get('m_t'), 'm_t')
@@ -509,24 +517,24 @@ def generate_pdf_report(result):
         p_val = to_float(result.get('p_val'), 'p_val')
         ci_low = to_float(result.get('ci_low'), 'ci_low')
         ci_high = to_float(result.get('ci_high'), 'ci_high')
-        
+
         # 检查数据
         control_data = result.get('control_data')
         treatment_data = result.get('treatment_data')
         if control_data is None or treatment_data is None or len(control_data) < 2 or len(treatment_data) < 2:
             raise ValueError("control_data or treatment_data is missing or too short")
-        
-        # 最终的 PDF 输出缓冲区
+
+        # 最终PDF输出缓冲区（直接给PdfPages使用）
         buffer = io.BytesIO()
-        
+
         st.session_state.report_counter += 1
         report_id = f"RPT-{datetime.now().strftime('%Y%m%d')}-{st.session_state.report_counter:04d}"
-        
+
         # 安全计算 lift
         lift = (m_t - m_c) / abs(m_c) if abs(m_c) > 1e-9 else 0.0
         is_significant = p_val < 0.05
         is_powered = current_power > 0.8
-        
+
         if is_significant and is_powered:
             rec_line1 = "[PASS] Rollout to 100% – treatment shows"
             rec_line2 = "statistically significant and practical significance."
@@ -536,9 +544,9 @@ def generate_pdf_report(result):
         else:
             rec_line1 = "[FAIL] Stop or iterate – no significant"
             rec_line2 = "difference detected with sufficient power."
-        
+
         project_name = st.session_state.uploaded_file_name or 'Untitled'
-        
+
         # 描述统计表
         stats_control = {
             'N': len(control_data),
@@ -571,7 +579,7 @@ def generate_pdf_report(result):
             ['Min', f"{stats_control['Min']:.4f}", f"{stats_treatment['Min']:.4f}"],
             ['Max', f"{stats_control['Max']:.4f}", f"{stats_treatment['Max']:.4f}"],
         ]
-        
+
         # 动态分页判断
         PAGE_WIDTH = 210
         PAGE_HEIGHT = 297
@@ -582,279 +590,237 @@ def generate_pdf_report(result):
         TABLE_ROW_HEIGHT = 5.5
         n_rows = len(table_data)
         table_height = n_rows * TABLE_ROW_HEIGHT
-        
+
         if table_height + CURVE_HEIGHT <= available_height:
             total_pages = 3
             use_combined = True
         else:
             total_pages = 4
             use_combined = False
-        
+
         header_text = f"A/B TEST ANALYSIS REPORT  |  Report ID: {report_id}  |  Confidential"
 
-        # ==========================================
-        # 【核心修改点】：使用高质量的缩放方案转存图片
-        # ==========================================
-        def fig_to_pil_image(fig, dpi=300):
-            """
-            将 Matplotlib 的 Figure 对象渲染为 Pillow Image 对象。
-            使用 150 DPI 保证清晰度，并使用 LANCZOS 算法强制缩放至标准 A4 大小 (595 x 842 点)。
-            """
-            temp_buf = io.BytesIO()
-            try:
-                fig.savefig(temp_buf, format='png', dpi=dpi, bbox_inches='tight')
-            except Exception:
-                # 兜底：如果 tight 排版失败，使用默认布局
-                temp_buf = io.BytesIO()
-                fig.savefig(temp_buf, format='png', dpi=dpi)
-            
-            temp_buf.seek(0)
-            img = Image.open(temp_buf).convert('RGB')
-            temp_buf.close()
-            plt.close(fig) # 及时释放 Matplotlib 内存
+        # --------------------------
+        # 使用 PdfPages 矢量PDF输出，不再走PIL/PNG
+        # --------------------------
+        with PdfPages(buffer) as pdf:
+            # ---------- 第一页：封面 ----------
+            fig1 = plt.figure(figsize=(8.5, 11))
+            fig1.text(0.05, 0.97, header_text, fontsize=9, color='gray')
+            if st.session_state.logo_img:
+                try:
+                    orig_width, orig_height = st.session_state.logo_img.size
+                    max_width = 150
+                    max_height = 60
+                    ratio = min(max_width / orig_width, max_height / orig_height, 1.0)
+                    new_width = int(orig_width * ratio)
+                    new_height = int(orig_height * ratio)
+                    logo_resized = st.session_state.logo_img.resize((new_width, new_height), Image.LANCZOS)
+                    img_box = OffsetImage(logo_resized, zoom=1)
+                    ab = AnnotationBbox(img_box, xy=(0.12, 0.905), xycoords='figure fraction',
+                                        box_alignment=(0, 1), frameon=False)
+                    fig1.add_artist(ab)
+                except Exception as e:
+                    print(f"Logo 加载失败: {e}")
+            plt.text(0.12, 0.82, "A/B TEST ANALYSIS REPORT", fontsize=22, weight='bold', transform=fig1.transFigure)
+            plt.text(0.12, 0.77, f"Report ID: {report_id}", fontsize=12, color='gray', transform=fig1.transFigure)
+            plt.text(0.12, 0.73, f"Project: {project_name}", fontsize=13, transform=fig1.transFigure)
+            plt.text(0.12, 0.69, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", fontsize=11, color='gray', transform=fig1.transFigure)
+            plt.text(0.12, 0.62, "EXECUTIVE SUMMARY", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+            summary_line1 = f"Treatment outperforms Control by {lift*100:.1f}%"
+            summary_line2 = f"(p={p_val:.4f}, Power={current_power:.1%})"
+            summary_color = '#2E7D32' if is_significant and is_powered else '#C62828'
+            plt.text(0.12, 0.57, summary_line1, fontsize=16, weight='bold', color=summary_color, transform=fig1.transFigure)
+            plt.text(0.12, 0.53, summary_line2, fontsize=14, color=summary_color, transform=fig1.transFigure)
+            plt.text(0.12, 0.45, "KEY METRICS", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+            plt.text(0.12, 0.40, f"Difference: {m_t-m_c:.4f}  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]", fontsize=13, transform=fig1.transFigure)
+            plt.text(0.12, 0.36, f"P-Value: {p_val:.5f}  |  Cohen's d: {cohen_d:.3f} ({result['effect_label']})", fontsize=13, transform=fig1.transFigure)
+            plt.text(0.12, 0.32, f"Statistical Power: {current_power:.1%}  |  MDE: {result['mde']:.3f}", fontsize=13, transform=fig1.transFigure)
+            if current_power < 0.8:
+                plt.text(0.12, 0.26, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (cohen_d**2))} samples per group for 80% power.", fontsize=11, color='#C62828', transform=fig1.transFigure)
+            plt.text(0.12, 0.24, "RECOMMENDED ACTION", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+            plt.text(0.12, 0.20, rec_line1, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+            plt.text(0.12, 0.16, rec_line2, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+            plt.text(0.12, 0.06, "Confidential — for internal use only", fontsize=10, color='gray', transform=fig1.transFigure)
+            plt.text(0.85, 0.06, f"Page 1 of {total_pages}", fontsize=10, color='gray', transform=fig1.transFigure)
+            plt.axis('off')
+            pdf.savefig(fig1)
+            plt.close(fig1)
 
-            # 强制缩放为标准 A4 PDF 的物理尺寸 (595 x 842 点)
-            target_w, target_h = 595, 842
-            orig_w, orig_h = img.size
-            # 计算比例，确保图片不变形
-            ratio = min(target_w / orig_w, target_h / orig_h)
-            
-            # 只有当尺寸差得远时才进行缩放，保证画质
-            if abs(ratio - 1.0) > 0.01:
-                new_w, new_h = int(orig_w * ratio), int(orig_h * ratio)
-                img = img.resize((new_w, new_h), Image.LANCZOS)
-            
-            return img
-        
-        # 收集所有 PDF 页面图片对象的列表
-        pdf_pages_images = []
+            # ---------- 第二页：箱线图 + 直方图 ----------
+            fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=(8.5, 11), gridspec_kw={'hspace': 0.3})
+            fig2.text(0.05, 0.97, header_text, fontsize=9, color='gray')
+            fig2.text(0.5, 0.94, "Distribution Comparison: Box Plot & Histogram", fontsize=14, weight='bold', ha='center', transform=fig2.transFigure)
+            bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
+            for patch, color in zip(bp['boxes'], ['#2E86AB', '#A23B72']):
+                patch.set_facecolor(color)
+            ax1.scatter(1, m_c, color='white', s=80, zorder=5, label=f"Mean: {m_c:.3f}")
+            ax1.scatter(2, m_t, color='white', s=80, zorder=5, label=f"Mean: {m_t:.3f}")
+            ax1.legend(loc='upper left')
+            ax1.grid(True, alpha=0.3)
+            ax2.hist(control_data, bins=15, alpha=0.6, label='Control', color='#2E86AB')
+            ax2.hist(treatment_data, bins=15, alpha=0.6, label='Treatment', color='#A23B72')
+            ax2.legend()
+            ax2.grid(True, alpha=0.3)
+            plt.text(0.85, 0.02, f"Page 2 of {total_pages}", fontsize=10, color='gray', transform=fig2.transFigure)
+            pdf.savefig(fig2)
+            plt.close(fig2)
 
-        # ---------- 第一页：封面 ----------
-        fig1 = plt.figure(figsize=(8.5, 11))
-        fig1.text(0.05, 0.97, header_text, fontsize=9, color='gray')
-        if st.session_state.logo_img:
-            try:
-                orig_width, orig_height = st.session_state.logo_img.size
-                max_width = 150
-                max_height = 60
-                ratio = min(max_width / orig_width, max_height / orig_height, 1.0)
-                new_width = int(orig_width * ratio)
-                new_height = int(orig_height * ratio)
-                logo_resized = st.session_state.logo_img.resize((new_width, new_height), Image.LANCZOS)
-                img_box = OffsetImage(logo_resized, zoom=1)
-                ab = AnnotationBbox(img_box, xy=(0.12, 0.91), xycoords='figure fraction',
-                                    box_alignment=(0, 1), frameon=False)
-                fig1.add_artist(ab)
-            except Exception as e:
-                print(f"Logo 加载失败: {e}")
-        plt.text(0.12, 0.82, "A/B TEST ANALYSIS REPORT", fontsize=22, weight='bold', transform=fig1.transFigure)
-        plt.text(0.12, 0.77, f"Report ID: {report_id}", fontsize=12, color='gray', transform=fig1.transFigure)
-        plt.text(0.12, 0.73, f"Project: {project_name}", fontsize=13, transform=fig1.transFigure)
-        plt.text(0.12, 0.69, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", fontsize=11, color='gray', transform=fig1.transFigure)
-        plt.text(0.12, 0.62, "EXECUTIVE SUMMARY", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-        summary_line1 = f"Treatment outperforms Control by {lift*100:.1f}%"
-        summary_line2 = f"(p={p_val:.4f}, Power={current_power:.1%})"
-        summary_color = '#2E7D32' if is_significant and is_powered else '#C62828'
-        plt.text(0.12, 0.57, summary_line1, fontsize=16, weight='bold', color=summary_color, transform=fig1.transFigure)
-        plt.text(0.12, 0.53, summary_line2, fontsize=14, color=summary_color, transform=fig1.transFigure)
-        plt.text(0.12, 0.45, "KEY METRICS", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-        plt.text(0.12, 0.40, f"Difference: {m_t-m_c:.4f}  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]", fontsize=13, transform=fig1.transFigure)
-        plt.text(0.12, 0.36, f"P-Value: {p_val:.5f}  |  Cohen's d: {cohen_d:.3f} ({result['effect_label']})", fontsize=13, transform=fig1.transFigure)
-        plt.text(0.12, 0.32, f"Statistical Power: {current_power:.1%}  |  MDE: {result['mde']:.3f}", fontsize=13, transform=fig1.transFigure)
-        if current_power < 0.8:
-            plt.text(0.12, 0.26, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (cohen_d**2))} samples per group for 80% power.", fontsize=11, color='#C62828', transform=fig1.transFigure)
-        plt.text(0.12, 0.24, "RECOMMENDED ACTION", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-        plt.text(0.12, 0.20, rec_line1, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-        plt.text(0.12, 0.16, rec_line2, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-        plt.text(0.12, 0.06, "Confidential — for internal use only", fontsize=10, color='gray', transform=fig1.transFigure)
-        plt.text(0.85, 0.06, f"Page 1 of {total_pages}", fontsize=10, color='gray', transform=fig1.transFigure)
-        plt.axis('off')
-        pdf_pages_images.append(fig_to_pil_image(fig1))
-        
-        # ---------- 第二页：箱线图 + 直方图 ----------
-        fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=(8.5, 11), gridspec_kw={'hspace': 0.3})
-        fig2.text(0.05, 0.97, header_text, fontsize=9, color='gray')
-        fig2.text(0.5, 0.94, "Distribution Comparison: Box Plot & Histogram", fontsize=14, weight='bold', ha='center', transform=fig2.transFigure)
-        bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
-        for patch, color in zip(bp['boxes'], ['#2E86AB', '#A23B72']):
-            patch.set_facecolor(color)
-        ax1.scatter(1, m_c, color='white', s=80, zorder=5, label=f"Mean: {m_c:.3f}")
-        ax1.scatter(2, m_t, color='white', s=80, zorder=5, label=f"Mean: {m_t:.3f}")
-        ax1.legend(loc='upper left')
-        ax1.grid(True, alpha=0.3)
-        ax2.hist(control_data, bins=15, alpha=0.6, label='Control', color='#2E86AB')
-        ax2.hist(treatment_data, bins=15, alpha=0.6, label='Treatment', color='#A23B72')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
-        plt.text(0.85, 0.02, f"Page 2 of {total_pages}", fontsize=10, color='gray', transform=fig2.transFigure)
-        pdf_pages_images.append(fig_to_pil_image(fig2))
-        
-        # ---------- 第三页（合并）或分页 ----------
-        if use_combined:
-            fig_combined, (ax_curve, ax_table) = plt.subplots(
-                2, 1, figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4),
-                gridspec_kw={'height_ratios': [CURVE_HEIGHT, table_height], 'hspace': 0.2}
-            )
-            # 曲线
-            target_power = 0.8
-            def find_sample_size_for_power(eff, alpha, target_power=0.8, max_n=5000):
-                for n in range(10, max_n, 5):
-                    if calc_power_curve(eff, alpha, n, n) >= target_power:
-                        return n
-                return max_n
-            needed_n = find_sample_size_for_power(cohen_d, alpha)
-            max_x = max(200, needed_n + 50)
-            max_x = min(max_x, 5000)
-            if max_x <= 200:
-                sample_sizes = np.arange(5, max_x+1, 5)
-            else:
-                sample_sizes = np.linspace(5, max_x, 100, dtype=int)
-            powers = [calc_power_curve(cohen_d, alpha, n, n) for n in sample_sizes]
-            ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
-            ax_curve.axhline(target_power, color='red', linestyle='--', alpha=0.7, label='80% Threshold')
-            ax_curve.set_xlabel("Sample Size (per group)", fontsize=10)
-            ax_curve.set_ylabel("Statistical Power", fontsize=10)
-            ax_curve.set_title(f"Power Curve (α={alpha}, d={cohen_d:.2f})", fontsize=11)
-            ax_curve.legend(loc='lower right', fontsize=9)
-            ax_curve.grid(True, alpha=0.3)
-            ax_curve.tick_params(axis='both', labelsize=9)
-            ax_curve.set_ylim(0, 0.85)
-            if needed_n <= max_x:
-                ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
-                ax_curve.legend(loc='lower right')
-            effect_text = f"d = {cohen_d:.2f}"
-            if cohen_d < 0.2:
-                effect_text += " (very small effect)"
-            elif cohen_d < 0.5:
-                effect_text += " (small effect)"
-            else:
-                effect_text += " (medium to large effect)"
-            ax_curve.text(0.65, 0.75, effect_text, fontsize=10, color='#333333',
-                          transform=ax_curve.transAxes, ha='left', va='top',
-                          bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
-            if cohen_d < 0.2 and needed_n > 500:
-                note = "Tiny effect → very large sample needed. Consider redesign."
-            elif needed_n > 200:
-                note = f"Need ~{needed_n} samples/group for 80% power."
-            else:
-                note = f"Power {current_power:.1%}; {needed_n} samples/group recommended."
-            ax_curve.text(0.02, 0.02, note, fontsize=8, color='#333333',
-                          transform=ax_curve.transAxes, ha='left', va='bottom', wrap=True)
-            # 表格（修复了空 bbox 导致的崩溃，显式赋予固定高度）
-            ax_table.axis('off')
-            ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
-            ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
-            table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
-                                   colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.12, 0.95, 0.60])
-            table.auto_set_font_size(False)
-            table.set_fontsize(10.5)
-            for (i, j), cell in table.get_celld().items():
-                if i == 0:
-                    cell.set_facecolor('#1a3b5c')
-                    cell.set_text_props(weight='bold', color='white')
+            # ---------- 第三页（合并）或分页 ----------
+            if use_combined:
+                fig_combined, (ax_curve, ax_table) = plt.subplots(
+                    2, 1, figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4),
+                    gridspec_kw={'height_ratios': [CURVE_HEIGHT, table_height], 'hspace': 0.2}
+                )
+                # 曲线
+                target_power = 0.8
+                def find_sample_size_for_power(eff, alpha, target_power=0.8, max_n=5000):
+                    for n in range(10, max_n, 5):
+                        if calc_power_curve(eff, alpha, n, n) >= target_power:
+                            return n
+                    return max_n
+                needed_n = find_sample_size_for_power(cohen_d, alpha)
+                max_x = max(200, needed_n + 50)
+                max_x = min(max_x, 5000)
+                if max_x <= 200:
+                    sample_sizes = np.arange(5, max_x+1, 5)
                 else:
-                    cell.set_facecolor('#f5f5f5' if i % 2 == 0 else 'white')
-            fig_combined.text(0.05, 0.96, header_text, fontsize=9, color='gray')
-            fig_combined.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray')
-            pdf_pages_images.append(fig_to_pil_image(fig_combined))
-            
-        else:
-            # 分页：曲线页
-            fig_curve = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
-            ax_curve = fig_curve.add_subplot(111)
-            target_power = 0.8
-            def find_sample_size_for_power(eff, alpha, target_power=0.8, max_n=5000):
-                for n in range(10, max_n, 5):
-                    if calc_power_curve(eff, alpha, n, n) >= target_power:
-                        return n
-                return max_n
-            needed_n = find_sample_size_for_power(cohen_d, alpha)
-            max_x = max(200, needed_n + 50)
-            max_x = min(max_x, 5000)
-            if max_x <= 200:
-                sample_sizes = np.arange(5, max_x+1, 5)
-            else:
-                sample_sizes = np.linspace(5, max_x, 100, dtype=int)
-            powers = [calc_power_curve(cohen_d, alpha, n, n) for n in sample_sizes]
-            ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
-            ax_curve.axhline(target_power, color='red', linestyle='--', alpha=0.7, label='80% Threshold')
-            ax_curve.set_xlabel("Sample Size (per group)", fontsize=10)
-            ax_curve.set_ylabel("Statistical Power", fontsize=10)
-            ax_curve.set_title(f"Power Curve (α={alpha}, d={cohen_d:.2f})", fontsize=11)
-            ax_curve.legend(loc='lower right', fontsize=9)
-            ax_curve.grid(True, alpha=0.3)
-            ax_curve.tick_params(axis='both', labelsize=9)
-            ax_curve.set_ylim(0, 0.85)
-            if needed_n <= max_x:
-                ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
-                ax_curve.legend(loc='lower right')
-            effect_text = f"d = {cohen_d:.2f}"
-            if cohen_d < 0.2:
-                effect_text += " (very small effect)"
-            elif cohen_d < 0.5:
-                effect_text += " (small effect)"
-            else:
-                effect_text += " (medium to large effect)"
-            ax_curve.text(0.65, 0.75, effect_text, fontsize=10, color='#333333',
-                          transform=ax_curve.transAxes, ha='left', va='top',
-                          bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
-            if cohen_d < 0.2 and needed_n > 500:
-                note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re-evaluating the experiment design."
-            elif needed_n > 200:
-                note = f"To reach 80% power, you need about {needed_n} samples per group. This may require extending the collection period."
-            else:
-                note = f"Current power is {current_power:.1%}. About {needed_n} samples per group is recommended for 80% power."
-            ax_curve.text(0.02, -0.30, note, fontsize=8, color='#333333',
-                          transform=ax_curve.transAxes, ha='left', va='bottom', wrap=True)
-            fig_curve.text(0.05, 0.96, header_text, fontsize=9, color='gray')
-            fig_curve.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray')
-            pdf_pages_images.append(fig_to_pil_image(fig_curve))
-            
-            # 表格页（同样修复了空 bbox 导致的崩溃）
-            fig_table = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
-            ax_table = fig_table.add_subplot(111)
-            ax_table.axis('off')
-            fig_table.text(0.05, 0.96, header_text, fontsize=9, color='gray')
-            ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
-            ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
-            table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
-                                   colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.08, 0.95, 0.62])
-            table.auto_set_font_size(False)
-            table.set_fontsize(10.5)
-            for (i, j), cell in table.get_celld().items():
-                if i == 0:
-                    cell.set_facecolor('#1a3b5c')
-                    cell.set_text_props(weight='bold', color='white')
+                    sample_sizes = np.linspace(5, max_x, 100, dtype=int)
+                powers = [calc_power_curve(cohen_d, alpha, n, n) for n in sample_sizes]
+                ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
+                ax_curve.axhline(target_power, color='red', linestyle='--', alpha=0.7, label='80% Threshold')
+                ax_curve.set_xlabel("Sample Size (per group)", fontsize=10)
+                ax_curve.set_ylabel("Statistical Power", fontsize=10)
+                ax_curve.set_title(f"Power Curve (α={alpha}, d={cohen_d:.2f})", fontsize=11)
+                ax_curve.legend(loc='lower right', fontsize=9)
+                ax_curve.grid(True, alpha=0.3)
+                ax_curve.tick_params(axis='both', labelsize=9)
+                ax_curve.set_ylim(0, 0.85)
+                if needed_n <= max_x:
+                    ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
+                    ax_curve.legend(loc='lower right')
+                effect_text = f"d = {cohen_d:.2f}"
+                if cohen_d < 0.2:
+                    effect_text += " (very small effect)"
+                elif cohen_d < 0.5:
+                    effect_text += " (small effect)"
                 else:
-                    cell.set_facecolor('#f5f5f5' if i % 2 == 0 else 'white')
-            fig_table.text(0.85, 0.02, f"Page 4 of {total_pages}", fontsize=10, color='gray')
-            pdf_pages_images.append(fig_to_pil_image(fig_table))
+                    effect_text += " (medium to large effect)"
+                ax_curve.text(0.65, 0.75, effect_text, fontsize=10, color='#333333',
+                              transform=ax_curve.transAxes, ha='left', va='top',
+                              bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
+                if cohen_d < 0.2 and needed_n > 500:
+                    note = "Tiny effect → very large sample needed. Consider redesign."
+                elif needed_n > 200:
+                    note = f"Need ~{needed_n} samples/group for 80% power."
+                else:
+                    note = f"Power {current_power:.1%}; {needed_n} samples/group recommended."
+                ax_curve.text(0.02, 0.02, note, fontsize=8, color='#333333',
+                              transform=ax_curve.transAxes, ha='left', va='bottom', wrap=True)
+                # 表格
+                ax_table.axis('off')
+                ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
+                ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
+                table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
+                                       colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.08, 0.95, 0.64])
+                table.auto_set_font_size(False)
+                table.set_fontsize(13)
+                table.scale(1, 1.4)
+                for (i, j), cell in table.get_celld().items():
+                    if i == 0:
+                        cell.set_facecolor('#1a3b5c')
+                        cell.set_text_props(weight='bold', color='white', fontsize=13)
+                    else:
+                        cell.set_facecolor('#f5f5f5' if i % 2 == 0 else 'white')
+                fig_combined.text(0.05, 0.96, header_text, fontsize=9, color='gray')
+                fig_combined.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray')
+                pdf.savefig(fig_combined)
+                plt.close(fig_combined)
+            else:
+                # 分页：曲线页
+                fig_curve = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
+                ax_curve = fig_curve.add_subplot(111)
+                target_power = 0.8
+                def find_sample_size_for_power(eff, alpha, target_power=0.8, max_n=5000):
+                    for n in range(10, max_n, 5):
+                        if calc_power_curve(eff, alpha, n, n) >= target_power:
+                            return n
+                    return max_n
+                needed_n = find_sample_size_for_power(cohen_d, alpha)
+                max_x = max(200, needed_n + 50)
+                max_x = min(max_x, 5000)
+                if max_x <= 200:
+                    sample_sizes = np.arange(5, max_x+1, 5)
+                else:
+                    sample_sizes = np.linspace(5, max_x, 100, dtype=int)
+                powers = [calc_power_curve(cohen_d, alpha, n, n) for n in sample_sizes]
+                ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
+                ax_curve.axhline(target_power, color='red', linestyle='--', alpha=0.7, label='80% Threshold')
+                ax_curve.set_xlabel("Sample Size (per group)", fontsize=10)
+                ax_curve.set_ylabel("Statistical Power", fontsize=10)
+                ax_curve.set_title(f"Power Curve (α={alpha}, d={cohen_d:.2f})", fontsize=11)
+                ax_curve.legend(loc='lower right', fontsize=9)
+                ax_curve.grid(True, alpha=0.3)
+                ax_curve.tick_params(axis='both', labelsize=9)
+                ax_curve.set_ylim(0, 0.85)
+                if needed_n <= max_x:
+                    ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
+                    ax_curve.legend(loc='lower right')
+                effect_text = f"d = {cohen_d:.2f}"
+                if cohen_d < 0.2:
+                    effect_text += " (very small effect)"
+                elif cohen_d < 0.5:
+                    effect_text += " (small effect)"
+                else:
+                    effect_text += " (medium to large effect)"
+                ax_curve.text(0.65, 0.75, effect_text, fontsize=10, color='#333333',
+                              transform=ax_curve.transAxes, ha='left', va='top',
+                              bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
+                if cohen_d < 0.2 and needed_n > 500:
+                    note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re‑evaluating the experiment design."
+                elif needed_n > 200:
+                    note = f"To reach 80% power, you need about {needed_n} samples per group. This may require extending the collection period."
+                else:
+                    note = f"Current power is {current_power:.1%}. About {needed_n} samples per group is recommended for 80% power."
+                ax_curve.text(0.02, -0.30, note, fontsize=8, color='#333333',
+                              transform=ax_curve.transAxes, ha='left', va='bottom', wrap=True)
+                fig_curve.text(0.05, 0.96, header_text, fontsize=9, color='gray')
+                fig_curve.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray')
+                pdf.savefig(fig_curve)
+                plt.close(fig_curve)
 
-        # ==========================================
-        # 使用 Pillow 将所有 PNG 合并为 PDF
-        # ==========================================
-        if pdf_pages_images:
-            # 取出第一张作为基准，后续的图片追加上去
-            pdf_pages_images[0].save(
-                buffer,
-                save_all=True,
-                append_images=pdf_pages_images[1:],
-                format='PDF',
-                quality=100  # 控制 PDF 里的图片质量
-            )
-        
+                # 表格页
+                fig_table = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
+                ax_table = fig_table.add_subplot(111)
+                ax_table.axis('off')
+                fig_table.text(0.05, 0.96, header_text, fontsize=9, color='gray')
+                ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
+                ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
+                table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
+                                       colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.08, 0.95, 0.64])
+                table.auto_set_font_size(False)
+                table.set_fontsize(13)
+                table.scale(1, 1.4)
+                for (i, j), cell in table.get_celld().items():
+                    if i == 0:
+                        cell.set_facecolor('#1a3b5c')
+                        cell.set_text_props(weight='bold', color='white', fontsize=13)
+                    else:
+                        cell.set_facecolor('#f5f5f5' if i % 2 == 0 else 'white')
+                fig_table.text(0.85, 0.02, f"Page 4 of {total_pages}", fontsize=10, color='gray')
+                pdf.savefig(fig_table)
+                plt.close(fig_table)
+
         buffer.seek(0)
         st.session_state.last_report_id = report_id
         return buffer.getvalue(), report_id
-    
+
     except Exception as e:
         import traceback
-        # 使用 st.exception 显示完整堆栈，不会折叠
         st.exception(e)
         st.error(f"Result keys: {list(result.keys())}")
         st.error(f"m_c={result.get('m_c')}, m_t={result.get('m_t')}, s_c={result.get('s_c')}, s_t={result.get('s_t')}, cohen_d={result.get('cohen_d')}, alpha={result.get('alpha')}, power={result.get('current_power')}")
         st.error(f"ci_low={result.get('ci_low')}, ci_high={result.get('ci_high')}")
-        # 打印到日志
         print(traceback.format_exc())
         return b"", "ERROR"
 # ========== 主逻辑 ==========
