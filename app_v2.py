@@ -616,7 +616,7 @@ def generate_pdf_report(result):
                     new_height = int(orig_height * ratio)
                     logo_resized = st.session_state.logo_img.resize((new_width, new_height), Image.LANCZOS)
                     img_box = OffsetImage(logo_resized, zoom=1)
-                    ab = AnnotationBbox(img_box, xy=(0.12, 0.905), xycoords='figure fraction',
+                    ab = AnnotationBbox(img_box, xy=(0.12, 0.94), xycoords='figure fraction',
                                         box_alignment=(0, 1), frameon=False)
                     fig1.add_artist(ab)
                 except Exception as e:
@@ -721,10 +721,10 @@ def generate_pdf_report(result):
                 ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
                 ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
                 table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
-                                       colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.08, 0.95, 0.64])
+                                       colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.06, 0.95, 0.68])
                 table.auto_set_font_size(False)
                 table.set_fontsize(13)
-                table.scale(1, 1.4)
+                table.scale(1, 1.44)
                 for (i, j), cell in table.get_celld().items():
                     if i == 0:
                         cell.set_facecolor('#1a3b5c')
@@ -796,10 +796,10 @@ def generate_pdf_report(result):
                 ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
                 ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
                 table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
-                                       colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.08, 0.95, 0.64])
+                                       colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.06, 0.95, 0.68])
                 table.auto_set_font_size(False)
                 table.set_fontsize(13)
-                table.scale(1, 1.4)
+                table.scale(1, 1.44)
                 for (i, j), cell in table.get_celld().items():
                     if i == 0:
                         cell.set_facecolor('#1a3b5c')
