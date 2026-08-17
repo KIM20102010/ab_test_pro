@@ -18,26 +18,29 @@ import hashlib
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 from matplotlib.backends.backend_pdf import PdfPages
 import math
+import re
+import zipfile
 
-# ==========【全局rc配置，放在所有import之后，st.set_page_config之前】==========
-plt.rcParams['pdf.fonttype'] = 42    # TrueType矢量字体，PDF内文字可复制
+# =========【全局rc配置】========
+plt.rcParams['pdf.fonttype'] = 42
 plt.rcParams['ps.fonttype'] = 42
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['figure.dpi'] = 100
 
-# ========== 辅助函数 ==========
-def is_valid_number(x):
-    """检查数值是否为有效数字（非None，非NaN，非inf）"""
-    if x is None:
-        return False
-    if isinstance(x, float):
-        if math.isnan(x) or math.isinf(x):
-            return False
-    return True
+# =========【常量定义】========
+PAGE_WIDTH_MM = 210
+PAGE_HEIGHT_MM = 297
+PAGE_MARGIN_TOP_MM = 25
+PAGE_MARGIN_BOTTOM_MM = 25
+CURVE_HEIGHT_MM = 100
+TABLE_ROW_HEIGHT_MM = 5.5
+A4_FIGSIZE_INCHES = (8.5, 11)
 
-# ========== 报告ID计数器 ==========
+# ========= 报告ID计数器 =========
 if "report_counter" not in st.session_state:
     st.session_state.report_counter = 0
+if "last_report_id" not in st.session_state:
+    st.session_state.last_report_id = None
 
 # ========== 页面配置 ==========
 st.set_page_config(
@@ -48,18 +51,27 @@ st.set_page_config(
 )
 
 # ========== 环境变量 ==========
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "").strip()
+
+if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+    st.error("Missing Supabase environment variables! Please check your deployment settings.")
+    st.stop()
+
+# ========== Supabase客户端（带异常保护） ==========
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+except Exception as e:
+    st.error(f"Supabase client initialization failed: {e}")
+    st.stop()
+
 CREEM_PAYMENT_SINGLE = os.environ.get("CREEM_PAYMENT_LINK_SINGLE", "#")
 CREEM_PAYMENT_STARTER = os.environ.get("CREEM_PAYMENT_LINK_STARTER", "#")
 CREEM_PAYMENT_FOUNDER = os.environ.get("CREEM_PAYMENT_LINK_FOUNDER", "#")
 FREE_TRIAL_LIMIT = 2
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 
-# ========== Supabase客户端 ==========
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
-
-# ========== Session State初始化 ==========
+# ========== Session State初始化（全部补全） ==========
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "user_email" not in st.session_state:
@@ -88,92 +100,198 @@ if "batch_results" not in st.session_state:
     st.session_state.batch_results = {}
 if "is_processing" not in st.session_state:
     st.session_state.is_processing = False
+if "login_attempts" not in st.session_state:
+    st.session_state.login_attempts = 0
+if "login_blocked_until" not in st.session_state:
+    st.session_state.login_blocked_until = None
+if "last_profile_refresh" not in st.session_state:
+    st.session_state.last_profile_refresh = 0
+if "button_counter" not in st.session_state:
+    st.session_state.button_counter = 0
+if "first_load" not in st.session_state:
+    st.session_state.first_load = True
+if "analysis_result" not in st.session_state:
+    st.session_state.analysis_result = None
 
-# ========== 认证函数 ==========
+# ========== 辅助函数 ==========
+def is_valid_number(x):
+    if x is None:
+        return False
+    if isinstance(x, (int, np.integer)):
+        return True
+    if isinstance(x, (float, np.floating)):
+        return not (math.isnan(x) or math.isinf(x))
+    # 对于其他类型，尝试转换为float
+    try:
+        val = float(x)
+        return not (math.isnan(val) or math.isinf(val))
+    except:
+        return False
+
+def validate_email(email):
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+# ========== Supabase 原生 Auth 函数 ==========
+def sign_up(email, password):
+    try:
+        resp = supabase.auth.sign_up({"email": email, "password": password})
+        if resp.user:
+            # 等待 profile 创建（触发器自动创建），但可能需要短暂等待
+            time.sleep(0.5)  # 给触发器一点时间
+            return True, "Account created successfully."
+        else:
+            return False, "Registration failed. Please try again."
+    except Exception as e:
+        error_msg = str(e)
+        if "User already registered" in error_msg:
+            return False, "Email already registered."
+        print(f"Sign up error: {e}")
+        return False, "Registration failed. Please try again."
+
 def login(email, password):
     try:
-        response = supabase.table('profiles').select('*').eq('email', email).execute()
-        if response.data:
-            user = response.data[0]
-            st.session_state.authenticated = True
-            st.session_state.user_email = email
-            st.session_state.user_plan = user.get('plan', 'free')
-            st.session_state.free_usage_count = user.get('free_usage_count', 0)
-            st.session_state.free_usage_date = user.get('free_usage_date')
-            return True
+        # 防爆破（会话级）
+        if st.session_state.login_blocked_until and time.time() < st.session_state.login_blocked_until:
+            return False, None, "Too many failed attempts. Please wait 5 minutes."
+
+        email = email.strip()
+        password = password.strip()
+        if not email or not password:
+            return False, None, "Email and password are required."
+
+        resp = supabase.auth.sign_in_with_password({"email": email, "password": password})
+        if resp.user:
+            # 登录成功，重置计数
+            st.session_state.login_attempts = 0
+            st.session_state.login_blocked_until = None
+            # 获取用户业务数据 (profile)
+            user_email = resp.user.email
+            profile = fetch_user_profile(user_email)
+            if profile:
+                return True, profile, None
+            else:
+                # 尝试创建 profile（兼容旧数据）
+                try:
+                    supabase.table('profiles').insert({
+                        'email': user_email,
+                        'plan': 'free',
+                        'free_usage_count': 0,
+                        'free_usage_date': datetime.now(timezone.utc).date().isoformat()
+                    }).execute()
+                    profile2 = fetch_user_profile(user_email)
+                    if profile2:
+                        return True, profile2, None
+                except Exception as e:
+                    print(f"Profile creation error: {e}")
+                return False, None, "User profile not found. Please contact support."
         else:
+            # 登录失败，累计失败计数
+            st.session_state.login_attempts += 1
+            if st.session_state.login_attempts >= 5:
+                st.session_state.login_blocked_until = time.time() + 300
+            return False, None, "Invalid email or password."
+    except Exception as e:
+        print(f"Login error: {e}")
+        # 不将网络异常计入失败次数
+        return False, None, "Login failed. Please try again."
+
+def fetch_user_profile(email):
+    try:
+        resp = supabase.table('profiles').select('*').eq('email', email).execute()
+        if resp.data:
+            return resp.data[0]
+    except Exception as e:
+        print(f"Fetch profile error: {e}")
+    return None
+
+def logout():
+    try:
+        supabase.auth.sign_out()
+    except:
+        pass
+    st.session_state.authenticated = False
+    st.session_state.user_email = None
+    st.session_state.user_plan = 'free'
+    st.session_state.unlocked = False
+    st.session_state.login_attempts = 0
+    st.session_state.login_blocked_until = None
+    st.rerun()
+
+# ========== 免费配额检查（先读数据库） ==========
+def check_free_quota():
+    if st.session_state.user_plan != 'free':
+        return True
+    # 从数据库读取最新配额
+    email = st.session_state.user_email
+    try:
+        resp = supabase.table('profiles').select('free_usage_count, free_usage_date').eq('email', email).execute()
+        if resp.data:
+            db_count = resp.data[0]['free_usage_count']
+            db_date = resp.data[0]['free_usage_date']
+            today = datetime.now(timezone.utc).date().isoformat()
+            if db_date != today:
+                # 跨天重置
+                supabase.table('profiles').update({
+                    'free_usage_count': 0,
+                    'free_usage_date': today
+                }).eq('email', email).execute()
+                st.session_state.free_usage_count = 0
+                st.session_state.free_usage_date = today
+                return True
+            else:
+                # 更新session
+                st.session_state.free_usage_count = db_count
+                st.session_state.free_usage_date = db_date
+                return db_count < FREE_TRIAL_LIMIT
+        else:
+            # 若无记录，创建
             supabase.table('profiles').insert({
                 'email': email,
                 'plan': 'free',
                 'free_usage_count': 0,
                 'free_usage_date': datetime.now(timezone.utc).date().isoformat()
             }).execute()
-            st.session_state.authenticated = True
-            st.session_state.user_email = email
-            st.session_state.user_plan = 'free'
             st.session_state.free_usage_count = 0
+            st.session_state.free_usage_date = datetime.now(timezone.utc).date().isoformat()
             return True
     except Exception as e:
-        st.error(f"Login error: {e}")
-        return False
-
-def logout():
-    st.session_state.authenticated = False
-    st.session_state.user_email = None
-    st.session_state.user_plan = 'free'
-    st.session_state.unlocked = False
-    st.rerun()
-
-# ========== 免费配额检查 ==========
-def check_free_quota():
-    if st.session_state.user_plan != 'free':
-        return True
-    today = datetime.now(timezone.utc).date().isoformat()
-    if st.session_state.free_usage_date != today:
-        st.session_state.free_usage_count = 0
-        st.session_state.free_usage_date = today
-        try:
-            supabase.table('profiles').update({
-                'free_usage_count': 0,
-                'free_usage_date': today
-            }).eq('email', st.session_state.user_email).execute()
-        except:
-            pass
-        return True
-    return st.session_state.free_usage_count < FREE_TRIAL_LIMIT
+        print(f"Check free quota error: {e}")
+        # 降级使用session值
+        today = datetime.now(timezone.utc).date().isoformat()
+        if st.session_state.free_usage_date != today:
+            st.session_state.free_usage_count = 0
+            st.session_state.free_usage_date = today
+        return st.session_state.free_usage_count < FREE_TRIAL_LIMIT
 
 def increment_free_usage():
+    """先更新数据库，成功后再改内存"""
     if st.session_state.user_plan != 'free':
         return
-    st.session_state.free_usage_count += 1
+    email = st.session_state.user_email
     try:
-        supabase.table('profiles').update({
-            'free_usage_count': st.session_state.free_usage_count
-        }).eq('email', st.session_state.user_email).execute()
-    except:
-        pass
+        resp = supabase.table('profiles').select('free_usage_count').eq('email', email).execute()
+        if resp.data:
+            new_count = resp.data[0]['free_usage_count'] + 1
+            supabase.table('profiles').update({'free_usage_count': new_count}).eq('email', email).execute()
+            st.session_state.free_usage_count = new_count
+    except Exception as e:
+        print(f"Increment free usage error: {e}")
 
-# ========== 轮询Webhook解锁 ==========
-def check_webhook_unlock():
-    if st.session_state.unlocked or st.session_state.user_plan != 'free':
-        return
-    if time.time() - st.session_state.last_check < 3:
-        return
-    st.session_state.last_check = time.time()
-    try:
-        response = supabase.table('profiles').select('plan').eq('email', st.session_state.user_email).execute()
-        if response.data:
-            plan = response.data[0].get('plan', 'free')
-            if plan != 'free':
-                st.session_state.user_plan = plan
+def refresh_user_profile():
+    if st.session_state.authenticated and st.session_state.user_email:
+        profile = fetch_user_profile(st.session_state.user_email)
+        if profile:
+            st.session_state.user_plan = profile.get('plan', 'free')
+            st.session_state.free_usage_count = profile.get('free_usage_count', 0)
+            st.session_state.free_usage_date = profile.get('free_usage_date')
+            if st.session_state.user_plan != 'free':
                 st.session_state.unlocked = True
-                st.rerun()
-    except:
-        pass
+            else:
+                st.session_state.unlocked = False
 
 # ========== 渲染休眠遮罩 ==========
-if 'first_load' not in st.session_state:
-    st.session_state.first_load = True
+if st.session_state.first_load:
     with st.spinner("⏳ Waking up the server... This may take up to 20 seconds on first visit."):
         time.sleep(2)
     st.session_state.first_load = False
@@ -186,12 +304,49 @@ if not st.session_state.authenticated:
         email = st.text_input("Email")
         password = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Login / Sign Up")
-        if submitted and email:
-            if login(email, password):
-                st.success("✅ Logged in successfully!")
-                st.rerun()
+        if submitted:
+            if not email or not password:
+                st.error("Please fill in both email and password.")
+            elif not validate_email(email):
+                st.error("Invalid email format.")
             else:
-                st.error("Login failed. Please try again.")
+                success, profile, err = login(email, password)
+                if success and profile:
+                    st.session_state.authenticated = True
+                    st.session_state.user_email = email
+                    st.session_state.user_plan = profile.get('plan', 'free')
+                    st.session_state.free_usage_count = profile.get('free_usage_count', 0)
+                    st.session_state.free_usage_date = profile.get('free_usage_date')
+                    if st.session_state.user_plan != 'free':
+                        st.session_state.unlocked = True
+                    st.success("✅ Logged in successfully!")
+                    st.rerun()
+                else:
+                    if err and "Email already registered" in err:
+                        st.error(err)
+                    else:
+                        # 尝试注册
+                        reg_ok, reg_msg = sign_up(email, password)
+                        if reg_ok:
+                            st.success("✅ Account created! You are now logged in.")
+                            # 自动登录（重新调用 login，增加重试）
+                            for _ in range(3):  # 重试3次
+                                time.sleep(0.5)
+                                success2, profile2, err2 = login(email, password)
+                                if success2 and profile2:
+                                    st.session_state.authenticated = True
+                                    st.session_state.user_email = email
+                                    st.session_state.user_plan = profile2.get('plan', 'free')
+                                    st.session_state.free_usage_count = profile2.get('free_usage_count', 0)
+                                    st.session_state.free_usage_date = profile2.get('free_usage_date')
+                                    if st.session_state.user_plan != 'free':
+                                        st.session_state.unlocked = True
+                                    st.rerun()
+                                    break
+                            else:
+                                st.error("Login after registration failed. Please log in manually.")
+                        else:
+                            st.error(reg_msg or "Registration failed.")
     st.caption("📌 By signing up, you agree to our Terms of Service and Privacy Policy.")
     st.stop()
 
@@ -202,18 +357,24 @@ with st.sidebar:
         logout()
     st.markdown("---")
     st.header("⚙️ Controls")
-    
+
+    # 每30秒刷新一次profile
+    if st.session_state.authenticated:
+        if time.time() - st.session_state.last_profile_refresh > 30:
+            refresh_user_profile()
+            st.session_state.last_profile_refresh = time.time()
+
     logo_file = st.file_uploader("Upload Logo (PNG/JPG)", type=['png', 'jpg', 'jpeg'])
     if logo_file:
         st.session_state.logo_img = Image.open(logo_file)
         st.image(st.session_state.logo_img, width=150)
-    
+
     uploaded_file = st.file_uploader(
         "Upload CSV",
         type=['csv'],
         help="Max 5MB. For large datasets, take a random sample."
     )
-    
+
     if st.session_state.user_plan in ['starter', 'founder']:
         batch_files = st.file_uploader(
             "Batch Upload (up to 10 files)",
@@ -222,14 +383,20 @@ with st.sidebar:
             help="Founder's Plan only"
         )
         if batch_files:
-            st.session_state.batch_files = batch_files
-    
+            valid_batch = []
+            for f in batch_files:
+                if f.size > MAX_FILE_SIZE:
+                    st.warning(f"Skipping {f.name} - exceeds 5MB limit.")
+                else:
+                    valid_batch.append(f)
+            st.session_state.batch_files = valid_batch
+
     st.session_state.remove_outliers = st.checkbox(
         "Exclude Outliers (IQR method, Listwise Deletion)",
         value=True,
         help="Removes entire rows where any selected column has an outlier."
     )
-    
+
     st.markdown("---")
     st.subheader("🔓 Plans")
     if st.session_state.unlocked or st.session_state.user_plan != 'free':
@@ -238,7 +405,7 @@ with st.sidebar:
         rem = max(0, FREE_TRIAL_LIMIT - st.session_state.free_usage_count)
         st.info(f"🎁 Free trials left today: {rem}")
     st.markdown("---")
-    
+
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Free**")
@@ -254,7 +421,7 @@ with st.sidebar:
         st.markdown("- ✅ PDF download")
         st.markdown("- ✅ Logo embed")
         st.markdown("- ❌ Batch upload")
-    
+
     col3, col4 = st.columns(2)
     with col3:
         st.markdown("**Starter**")
@@ -272,38 +439,67 @@ with st.sidebar:
         st.markdown("- ✅ History (50 reports)")
         st.markdown("- 🔒 Lifetime price lock")
         st.markdown("- 👑 Priority support")
-    
+
     st.markdown("---")
     if st.session_state.user_plan == 'free':
-        if st.button("📄 Single Report ($49)", use_container_width=True):
-            st.markdown(f'<meta http-equiv="refresh" content="0;url={CREEM_PAYMENT_SINGLE}">', unsafe_allow_html=True)
-        if st.button("🚀 Starter Annual ($199)", use_container_width=True):
-            st.markdown(f'<meta http-equiv="refresh" content="0;url={CREEM_PAYMENT_STARTER}">', unsafe_allow_html=True)
-        if st.button("🔥 Founder’s Plan ($399)", use_container_width=True):
-            st.markdown(f'<meta http-equiv="refresh" content="0;url={CREEM_PAYMENT_FOUNDER}">', unsafe_allow_html=True)
-    st.markdown("---")
-    st.caption("🔒 All data processed locally. No data stored.")
+        st.link_button("📄 Single Report ($49)", url=CREEM_PAYMENT_SINGLE, use_container_width=True)
+        st.link_button("🚀 Starter Annual ($199)", url=CREEM_PAYMENT_STARTER, use_container_width=True)
+        st.link_button("🔥 Founder’s Plan ($399)", url=CREEM_PAYMENT_FOUNDER, use_container_width=True)
 
-# ========== 统计分析核心函数 ==========
+    st.markdown("---")
+    if not st.session_state.unlocked:
+        st.info("💡 After payment, please refresh the page to unlock PDF downloads.")
+    st.caption("🔒 Uploaded CSV files are processed locally and not stored on our servers. Account data is securely stored in the database.")
+
+# ========== 统计分析核心函数（带参数保护） ==========
+def calc_power(eff, alpha, n1, n2):
+    try:
+        if n1 < 2 or n2 < 2:
+            return 0.0
+        df_t = n1 + n2 - 2
+        if df_t < 1:
+            return 0.0
+        ncp = eff * np.sqrt((n1 * n2) / (n1 + n2))
+        if np.isnan(ncp) or np.isinf(ncp):
+            return 0.0
+        t_crit = stats.t.ppf(1 - alpha/2, df_t)
+        power = 1 - stats.nct.cdf(t_crit, df_t, ncp) + stats.nct.cdf(-t_crit, df_t, ncp)
+        return min(max(power, 0), 0.999)
+    except:
+        return 0.0
+
+def find_sample_size_for_power(effect, alpha, target_power=0.8, max_n=5000):
+    if effect == 0 or abs(effect) < 0.001:
+        return max_n
+    # 限制最大迭代次数防止死循环
+    for n in range(10, max_n, 5):
+        power = calc_power(effect, alpha, n, n)
+        if power >= target_power:
+            return n
+    return max_n
+
+def calc_mde(alpha, n1, n2, target_power=0.8):
+    if n1 < 2 or n2 < 2:
+        return 0.0, True
+    upper_bound = 3.0
+    for d in np.arange(0.01, upper_bound, 0.01):
+        if calc_power(d, alpha, n1, n2) >= target_power:
+            return d, False
+    return upper_bound, True
+
 def perform_statistical_tests(control, treatment):
     n_c, n_t = len(control), len(treatment)
     m_c, m_t = control.mean(), treatment.mean()
     s_c, s_t = control.std(), treatment.std()
-    
+
     paired = False
     w_stat, w_p = None, None
-    if n_c == n_t:
-        try:
-            w_stat, w_p = wilcoxon(treatment, control)
-            paired = True
-        except:
-            pass
-    
+
     t_stat, p_val = ttest_ind(treatment, control, equal_var=False)
-    
+
     pooled_std = np.sqrt((s_c**2 + s_t**2) / 2)
     cohen_d = (m_t - m_c) / pooled_std if pooled_std > 0 else 0.0
-    
+
     if abs(cohen_d) >= 0.8:
         effect_label = "Large Effect"
         effect_color = "🟢"
@@ -316,25 +512,25 @@ def perform_statistical_tests(control, treatment):
     else:
         effect_label = "Negligible Effect"
         effect_color = "⚪"
-    
+
     u_stat, u_p = mannwhitneyu(treatment, control, alternative='two-sided')
-    ad_c = anderson(control, dist='norm')
-    ad_t = anderson(treatment, dist='norm')
-    
-    def calc_power(eff, alpha, n1, n2):
-        df_t = n1 + n2 - 2
-        ncp = eff * np.sqrt((n1 * n2) / (n1 + n2))
-        t_crit = stats.t.ppf(1 - alpha/2, df_t)
-        power = 1 - stats.nct.cdf(t_crit, df_t, ncp) + stats.nct.cdf(-t_crit, df_t, ncp)
-        return min(max(power, 0), 0.999)
-    
+    # 修复：anderson异常捕获，全部相同数值不会崩溃
+    try:
+        ad_c = anderson(control, dist='norm')
+    except ValueError:
+        ad_c = None
+    try:
+        ad_t = anderson(treatment, dist='norm')
+    except ValueError:
+        ad_t = None
+
     alpha = 0.05
     current_power = calc_power(cohen_d, alpha, n_c, n_t)
-    
+
     se_diff = np.sqrt(s_c**2/n_c + s_t**2/n_t)
     ci_low = (m_t - m_c) - 1.96 * se_diff
     ci_high = (m_t - m_c) + 1.96 * se_diff
-    
+
     if p_val < alpha and current_power > 0.8:
         verdict = f"✅ **Statistically Significant** (p={p_val:.4f}, Power={current_power:.1%})"
     elif p_val < alpha and current_power <= 0.8:
@@ -343,14 +539,9 @@ def perform_statistical_tests(control, treatment):
         verdict = f"❌ **Not Significant** (p={p_val:.4f})"
     else:
         verdict = f"❓ **Inconclusive** (p={p_val:.4f}, Power={current_power:.1%})"
-    
-    def calc_mde(alpha, n1, n2, target_power=0.8):
-        for d in np.arange(0.01, 3.0, 0.01):
-            if calc_power(d, alpha, n1, n2) >= target_power:
-                return d
-        return 3.0
-    mde = calc_mde(alpha, n_c, n_t)
-    
+
+    mde, mde_reached_upper = calc_mde(alpha, n_c, n_t)
+
     return {
         'n_c': n_c, 'n_t': n_t,
         'm_c': m_c, 'm_t': m_t,
@@ -360,18 +551,17 @@ def perform_statistical_tests(control, treatment):
         'effect_label': effect_label,
         'effect_color': effect_color,
         'u_p': u_p,
-        'ad_c': ad_c,
-        'ad_t': ad_t,
         'current_power': current_power,
         'ci_low': ci_low, 'ci_high': ci_high,
         'verdict': verdict,
         'mde': mde,
+        'mde_reached_upper': mde_reached_upper,
         'paired': paired,
         'w_p': w_p,
         'alpha': alpha
     }
 
-def analyze_single_file(df, filename):
+def analyze_single_file(df, filename, project_name=None):
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     if len(numeric_cols) < 2:
         return {"error": f"File '{filename}' needs at least 2 numeric columns."}
@@ -388,15 +578,14 @@ def analyze_single_file(df, filename):
     result['control_data'] = control_data
     result['treatment_data'] = treatment_data
     result['df_clean'] = df_clean
+    result['project_name'] = project_name or filename
     return result
 
 # ========== 结果展示函数 ==========
 def display_results(result):
-    if 'button_counter' not in st.session_state:
-        st.session_state.button_counter = 0
     st.session_state.button_counter += 1
     btn_key = f"btn_{st.session_state.button_counter}"
-    
+
     tab1, tab2, tab3, tab4 = st.tabs(["📈 Metrics", "📊 Distributions", "⚡ Power", "📋 Data"])
     with tab1:
         col1, col2, col3 = st.columns(3)
@@ -408,7 +597,7 @@ def display_results(result):
         col5.metric("Statistical Power", f"{result['current_power']:.1%}")
         col6.metric("MDE (80% Power)", f"{result['mde']:.3f}")
         st.info(result['verdict'])
-        
+
         fig, ax = plt.subplots(figsize=(10, 1.5))
         diff = result['m_t'] - result['m_c']
         ax.errorbar(0, 0, xerr=1.96 * np.sqrt(result['s_c']**2/result['n_c'] + result['s_t']**2/result['n_t']),
@@ -419,37 +608,35 @@ def display_results(result):
         ax.set_xlabel(f"Mean Difference (95% CI: [{result['ci_low']:.3f}, {result['ci_high']:.3f}])")
         ax.set_title(f"Treatment - Control = {diff:.3f}")
         st.pyplot(fig)
-        plt.close()
-    
+        plt.close(fig)
+
     with tab2:
         control_data = result['control_data']
         treatment_data = result['treatment_data']
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-        
+
         bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
         for patch, color in zip(bp['boxes'], ['#2E86AB', '#A23B72']):
             patch.set_facecolor(color)
-        # 明确标注均值，使用醒目的颜色
         ax1.scatter(1, result['m_c'], color='yellow', s=100, zorder=5, label=f"Control Mean: {result['m_c']:.3f}")
         ax1.scatter(2, result['m_t'], color='yellow', s=100, zorder=5, label=f"Treatment Mean: {result['m_t']:.3f}")
         ax1.legend(loc='upper left')
         ax1.grid(True, alpha=0.3)
         ax1.set_ylabel('Value')
-        
-        # 直方图透明度调低，便于区分
+
         ax2.hist(control_data, bins=15, alpha=0.5, label='Control', color='#2E86AB', edgecolor='black')
         ax2.hist(treatment_data, bins=15, alpha=0.5, label='Treatment', color='#A23B72', edgecolor='black')
         ax2.legend()
         ax2.grid(True, alpha=0.3)
         ax2.set_xlabel('Value')
-        ax2.set_ylabel('Frequency')
-        
+        ax2.set_ylabel('Count')
+
         st.pyplot(fig)
-        plt.close()
-    
+        plt.close(fig)
+
     with tab3:
         sample_sizes = np.arange(5, 201, 5)
-        powers = [calc_power_curve(result['cohen_d'], result['alpha'], n, n) for n in sample_sizes]
+        powers = [calc_power(result['cohen_d'], result['alpha'], n, n) for n in sample_sizes]
         fig, ax = plt.subplots(figsize=(8, 4))
         ax.plot(sample_sizes, powers, 'b-', linewidth=2)
         ax.axhline(0.8, color='red', linestyle='--', alpha=0.7, label='80% Threshold')
@@ -459,22 +646,22 @@ def display_results(result):
         ax.grid(True, alpha=0.3)
         ax.legend()
         st.pyplot(fig)
-        plt.close()
-        
+        plt.close(fig)
+
         col1, col2 = st.columns(2)
         col1.metric("Current Power", f"{result['current_power']:.1%}")
         col2.metric("MDE (80% Power)", f"{result['mde']:.3f}")
         st.caption(f"To detect effect size d={result['cohen_d']:.2f} with 80% power, aim for ~{int(16 * (1 + 1) / (result['cohen_d']**2))} samples per group.")
-    
+
     with tab4:
         if 'df_clean' in result:
             st.dataframe(result['df_clean'], use_container_width=True)
-        
+
         st.markdown("---")
         st.subheader("📄 Report Export")
         if st.session_state.unlocked or st.session_state.user_plan != 'free':
             if st.button("📥 Generate PDF Report", type="primary", key=f"gen_pdf_{btn_key}"):
-                pdf_data, report_id = generate_pdf_report(result)
+                pdf_data, report_id = generate_pdf_report(result, project_name=st.session_state.uploaded_file_name)
                 if pdf_data:
                     st.download_button(
                         label="⬇️ Download PDF",
@@ -494,26 +681,21 @@ def display_results(result):
             )
             st.caption("💡 Free users can preview all metrics and charts. Upgrade to download PDF reports with your logo.")
 
-def calc_power_curve(effect, alpha, n1, n2):
-    df_t = n1 + n2 - 2
-    ncp = effect * np.sqrt((n1 * n2) / (n1 + n2))
-    t_crit = stats.t.ppf(1 - alpha/2, df_t)
-    power = 1 - stats.nct.cdf(t_crit, df_t, ncp) + stats.nct.cdf(-t_crit, df_t, ncp)
-    return min(max(power, 0), 0.999)
-
-# ========== PDF生成函数（带全局异常捕获） ==========
-def generate_pdf_report(result):
+# ========== PDF生成函数（异常返回None） ==========
+def generate_pdf_report(result, project_name=None):
     try:
-        # ===== 强制类型检查 =====
         def to_float(x, field_name):
-            if x is None or (isinstance(x, float) and (np.isnan(x) or np.isinf(x))):
-                raise ValueError(f"Field '{field_name}' is None or NaN")
+            if x is None:
+                raise ValueError(f"Field '{field_name}' is None")
             try:
-                return float(x)
+                val = float(x)
+                if np.isnan(val) or np.isinf(val):
+                    raise ValueError(f"Field '{field_name}' is NaN or Inf")
+                return val
             except:
                 raise ValueError(f"Field '{field_name}' cannot be converted to float (type: {type(x)})")
 
-        # 提取并转换所有关键数值字段（含标准差）
+        # 提取关键字段并校验
         m_c = to_float(result.get('m_c'), 'm_c')
         m_t = to_float(result.get('m_t'), 'm_t')
         s_c = to_float(result.get('s_c'), 's_c')
@@ -524,38 +706,58 @@ def generate_pdf_report(result):
         p_val = to_float(result.get('p_val'), 'p_val')
         ci_low = to_float(result.get('ci_low'), 'ci_low')
         ci_high = to_float(result.get('ci_high'), 'ci_high')
+        u_p = result.get('u_p')
+        removed_outliers = result.get('removed_outliers', 0)
 
-        # 检查数据
         control_data = result.get('control_data')
         treatment_data = result.get('treatment_data')
-        if control_data is None or treatment_data is None or len(control_data) < 2 or len(treatment_data) < 2:
-            raise ValueError("control_data or treatment_data is missing or too short")
+        if control_data is None or treatment_data is None:
+            raise ValueError("control_data or treatment_data is missing")
+        # 确保是数组且长度足够
+        if len(control_data) < 2 or len(treatment_data) < 2:
+            raise ValueError("control_data or treatment_data too short")
 
         buffer = io.BytesIO()
         st.session_state.report_counter += 1
         report_id = f"RPT-{datetime.now().strftime('%Y%m%d')}-{st.session_state.report_counter:04d}"
+        st.session_state.last_report_id = report_id
 
-        # ----- 安全计算 lift -----
-        lift = (m_t - m_c) / abs(m_c) if abs(m_c) > 1e-9 else 0.0
+        # Lift calculation with epsilon
+        eps = 1e-9
+        if abs(m_c) > eps:
+            lift = (m_t - m_c) / m_c
+            if abs(lift) > 10:
+                lift_unreliable = True
+            else:
+                lift_unreliable = False
+        else:
+            lift = 0.0
+            lift_unreliable = True
+
         is_significant = p_val < 0.05
         is_powered = current_power > 0.8
+        ci_crosses_zero = ci_low <= 0 and ci_high >= 0
 
-        # ----- 修正：执行摘要文案（中性、不误导）-----
-        if lift > 0:
-            summary_line1 = f"Observed Treatment vs Control difference: +{lift*100:.1f}%"
-        elif lift < 0:
-            summary_line1 = f"Observed Treatment vs Control difference: {-lift*100:.1f}% (negative)"
+        # Summary
+        if lift_unreliable:
+            summary_line1 = "Observed absolute difference (relative change unreliable due to near‑zero control mean)"
+            summary_line2 = f"Absolute Δ = {m_t-m_c:.4f}  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
         else:
-            summary_line1 = "Observed Treatment vs Control difference: 0%"
-        summary_line2 = f"(p={p_val:.4f}, Power={current_power:.1%})"
-        if not is_significant:
+            if lift > 0:
+                summary_line1 = f"Observed relative change: +{lift*100:.1f}%  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
+            elif lift < 0:
+                summary_line1 = f"Observed relative change: {-lift*100:.1f}% (negative)  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
+            else:
+                summary_line1 = f"No difference detected  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
+        if ci_crosses_zero:
+            summary_line1 += " — CI crosses zero, cannot rule out positive or negative effect"
+        elif is_significant:
+            summary_line1 += " — statistically significant"
+        else:
             summary_line1 += " — not statistically significant"
-        elif not is_powered:
-            summary_line1 += " — significant but underpowered"
-        else:
-            summary_line1 += " — statistically significant and well-powered"
+        summary_line2 = f"(p={p_val:.4f}, Power={current_power:.1%})"
 
-        # ----- 修正：落地建议（低功率时改为 INCONCLUSIVE）-----
+        # Recommendation (no emoji)
         if is_significant and is_powered:
             rec_line1 = "[PASS] Rollout to 100% – treatment shows"
             rec_line2 = "statistically significant and practical significance."
@@ -563,7 +765,6 @@ def generate_pdf_report(result):
             rec_line1 = "[CAUTION] Increase sample size – significant but"
             rec_line2 = "underpowered, need more data for confident decision."
         else:
-            # 不显著，无论功效高低，都不应直接判定“FAIL” (除非功效很高)
             if current_power > 0.8:
                 rec_line1 = "[FAIL] No significant difference detected"
                 rec_line2 = "with sufficient power. Consider stopping the test."
@@ -571,9 +772,9 @@ def generate_pdf_report(result):
                 rec_line1 = "[INCONCLUSIVE] Insufficient power to detect"
                 rec_line2 = "meaningful difference. Increase sample size or iterate design."
 
-        project_name = st.session_state.uploaded_file_name or 'Untitled'
+        proj_name = project_name or st.session_state.uploaded_file_name or 'Untitled'
 
-        # ----- 描述统计表（统一保留4位小数）-----
+        # Descriptive stats table
         stats_control = {
             'N': len(control_data),
             'Mean': np.mean(control_data),
@@ -606,17 +807,11 @@ def generate_pdf_report(result):
             ['Max', f"{stats_control['Max']:.4f}", f"{stats_treatment['Max']:.4f}"],
         ]
 
-        # ----- 动态分页判断 -----
-        PAGE_WIDTH = 210
-        PAGE_HEIGHT = 297
-        PAGE_MARGIN_TOP = 25
-        PAGE_MARGIN_BOTTOM = 25
-        available_height = PAGE_HEIGHT - PAGE_MARGIN_TOP - PAGE_MARGIN_BOTTOM
-        CURVE_HEIGHT = 100
-        TABLE_ROW_HEIGHT = 5.5
+        # Page layout
+        available_height = PAGE_HEIGHT_MM - PAGE_MARGIN_TOP_MM - PAGE_MARGIN_BOTTOM_MM
         n_rows = len(table_data)
-        table_height = n_rows * TABLE_ROW_HEIGHT
-        if table_height + CURVE_HEIGHT <= available_height:
+        table_height = n_rows * TABLE_ROW_HEIGHT_MM
+        if table_height + CURVE_HEIGHT_MM <= available_height:
             total_pages = 3
             use_combined = True
         else:
@@ -626,8 +821,8 @@ def generate_pdf_report(result):
         header_text = f"A/B TEST ANALYSIS REPORT  |  Report ID: {report_id}  |  Confidential"
 
         with PdfPages(buffer) as pdf:
-            # ---------- 第一页：封面 ----------
-            fig1 = plt.figure(figsize=(8.5, 11))
+            # Page 1: Cover
+            fig1 = plt.figure(figsize=A4_FIGSIZE_INCHES)
             fig1.text(0.05, 0.97, header_text, fontsize=9, color='gray')
             if st.session_state.logo_img:
                 try:
@@ -639,179 +834,118 @@ def generate_pdf_report(result):
                     new_height = int(orig_height * ratio)
                     logo_resized = st.session_state.logo_img.resize((new_width, new_height), Image.LANCZOS)
                     img_box = OffsetImage(logo_resized, zoom=1)
-                    ab = AnnotationBbox(img_box, xy=(0.12, 0.948), xycoords='figure fraction',
+                    ab = AnnotationBbox(img_box, xy=(0.12, 0.945), xycoords='figure fraction',
                                         box_alignment=(0, 1), frameon=False)
                     fig1.add_artist(ab)
                 except Exception as e:
                     print(f"Logo 加载失败: {e}")
+
             plt.text(0.12, 0.82, "A/B TEST ANALYSIS REPORT", fontsize=22, weight='bold', transform=fig1.transFigure)
             plt.text(0.12, 0.77, f"Report ID: {report_id}", fontsize=12, color='gray', transform=fig1.transFigure)
-            plt.text(0.12, 0.73, f"Project: {project_name}", fontsize=13, transform=fig1.transFigure)
+            plt.text(0.12, 0.73, f"Project: {proj_name}", fontsize=13, transform=fig1.transFigure)
             plt.text(0.12, 0.69, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", fontsize=11, color='gray', transform=fig1.transFigure)
+            plt.text(0.12, 0.65, f"alpha = {alpha} | Target power = 80% | Two‑tailed test", fontsize=9, color='gray', transform=fig1.transFigure)
+            plt.text(0.12, 0.62, "Report quality depends on valid experimental design and input dataset quality.", fontsize=8, color='gray', transform=fig1.transFigure)
+            if removed_outliers > 0:
+                plt.text(0.12, 0.59, f"Outliers removed (IQR): {removed_outliers} rows", fontsize=9, color='#333333', transform=fig1.transFigure)
 
-            plt.text(0.12, 0.62, "EXECUTIVE SUMMARY", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-            # 第一行：观察到的差异（中性）
-            plt.text(0.12, 0.57, summary_line1, fontsize=14, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-            # 第二行：P值和Power
-            plt.text(0.12, 0.53, summary_line2, fontsize=12, color=('#2E7D32' if is_significant and is_powered else '#C62828'), transform=fig1.transFigure)
+            plt.text(0.12, 0.54, "EXECUTIVE SUMMARY", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+            plt.text(0.12, 0.49, summary_line1, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+            plt.text(0.12, 0.45, summary_line2, fontsize=12, color=('#2E7D32' if is_significant and is_powered else '#C62828'), transform=fig1.transFigure)
 
-            # 添加注释：相对变化计算公式
-            plt.text(0.12, 0.49, "Relative change = (Treatment - Control) / Control", fontsize=9, color='gray', transform=fig1.transFigure)
+            if lift_unreliable:
+                plt.text(0.12, 0.41, "⚠️ Control mean close to zero; relative change unreliable.", fontsize=9, color='#C62828', transform=fig1.transFigure)
+            else:
+                plt.text(0.12, 0.41, "Relative change = (Treatment - Control) / Control", fontsize=9, color='gray', transform=fig1.transFigure)
 
-            plt.text(0.12, 0.43, "KEY METRICS", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-            plt.text(0.12, 0.38, f"Difference: {m_t-m_c:.4f}  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]", fontsize=13, transform=fig1.transFigure)
-            plt.text(0.12, 0.34, f"P-Value: {p_val:.5f}  |  Cohen's d: {cohen_d:.3f} ({result['effect_label']})", fontsize=13, transform=fig1.transFigure)
-            plt.text(0.12, 0.30, f"Statistical Power: {current_power:.1%}  |  MDE: {result['mde']:.3f} (absolute diff)", fontsize=13, transform=fig1.transFigure)
+            plt.text(0.12, 0.36, "KEY METRICS", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+            plt.text(0.12, 0.31, f"Difference: {m_t-m_c:.4f}  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]", fontsize=13, transform=fig1.transFigure)
+            plt.text(0.12, 0.27, f"P‑Value: {p_val:.5f}  |  Cohen's d: {cohen_d:.3f} ({result['effect_label']})", fontsize=13, transform=fig1.transFigure)
+            plt.text(0.12, 0.23, f"Statistical Power: {current_power:.1%}  |  MDE: {result['mde']:.3f} (absolute diff, alpha={alpha}, power=80%)", fontsize=13, transform=fig1.transFigure)
+            plt.text(0.12, 0.19, "MDE: Minimum Detectable Effect (absolute difference) with alpha=0.05, power=80%", fontsize=9, color='gray', transform=fig1.transFigure)
+            if u_p is not None:
+                plt.text(0.12, 0.16, f"Mann‑Whitney U p‑value: {u_p:.5f}", fontsize=9, color='gray', transform=fig1.transFigure)
+            plt.text(0.12, 0.13, "Statistical test: Welch's t‑test (two‑tailed, unequal variance) | Cohen's d uses pooled variance", fontsize=9, color='gray', transform=fig1.transFigure)
 
-            if current_power < 0.8:
-                plt.text(0.12, 0.25, f"⚠️ Low power. Aim for ~{int(16 * (1 + 1) / (cohen_d**2))} samples per group for 80% power.", fontsize=11, color='#C62828', transform=fig1.transFigure)
-                # 补充解释
-                plt.text(0.12, 0.21, "Low power means the test is unlikely to detect a true effect, even if one exists.", fontsize=10, color='#C62828', transform=fig1.transFigure)
+            # Warning texts with dynamic y
+            warning_y_start = 0.10
+            warnings = []
+            if not is_powered:
+                warnings.append("⚠️ Low power. Aim for more samples.")
+            warnings.append("Note: t‑test assumes approximate normality. For heavily skewed data, consider Mann‑Whitney U.")
+            warnings.append("Warning: Repeatedly peeking at results and stopping early inflates false‑positive rate.")
+            warnings.append("Note: This report evaluates a single metric only. Multiple metrics require multiplicity correction.")
+            for i, txt in enumerate(warnings):
+                y_pos = warning_y_start - i*0.025
+                if y_pos < 0.05:
+                    break
+                plt.text(0.12, y_pos, txt, fontsize=8, color='#C62828' if i==0 else 'gray', transform=fig1.transFigure)
 
-            plt.text(0.12, 0.17, "RECOMMENDED ACTION", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-            plt.text(0.12, 0.13, rec_line1, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-            plt.text(0.12, 0.09, rec_line2, fontsize=13, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-
-            plt.text(0.12, 0.06, "Confidential — for internal use only", fontsize=10, color='gray', transform=fig1.transFigure)
-            plt.text(0.85, 0.06, f"Page 1 of {total_pages}", fontsize=10, color='gray', transform=fig1.transFigure)
+            plt.text(0.12, 0.05, "Confidential — for internal use only", fontsize=9, color='gray', transform=fig1.transFigure)
+            plt.text(0.85, 0.05, f"Page 1 of {total_pages}", fontsize=10, color='gray', transform=fig1.transFigure)
             plt.axis('off')
             pdf.savefig(fig1)
             plt.close(fig1)
 
-            # ---------- 第二页：箱线图 + 直方图（添加图注，均值标注明确） ----------
-            fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=(8.5, 11), gridspec_kw={'hspace': 0.3})
+            # Page 2: Boxplot + Histogram
+            fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=A4_FIGSIZE_INCHES, gridspec_kw={'hspace': 0.35})
             fig2.text(0.05, 0.97, header_text, fontsize=9, color='gray')
             fig2.text(0.5, 0.94, "Figure 1: Distribution Comparison", fontsize=14, weight='bold', ha='center', transform=fig2.transFigure)
 
             bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
             for patch, color in zip(bp['boxes'], ['#2E86AB', '#A23B72']):
                 patch.set_facecolor(color)
-            # 明确标注均值，使用醒目的颜色
             ax1.scatter(1, m_c, color='yellow', s=100, zorder=5, label=f"Control Mean: {m_c:.3f}")
             ax1.scatter(2, m_t, color='yellow', s=100, zorder=5, label=f"Treatment Mean: {m_t:.3f}")
             ax1.legend(loc='upper left')
             ax1.grid(True, alpha=0.3)
             ax1.set_ylabel('Value')
+            ax1.text(0.02, 0.02, "Box-plot: center line = median; white dot = sample mean; whiskers = 1.5×IQR",
+                     fontsize=7, color='gray', transform=ax1.transAxes)
 
-            # 直方图透明度调低，便于区分
             ax2.hist(control_data, bins=15, alpha=0.5, label='Control', color='#2E86AB', edgecolor='black')
             ax2.hist(treatment_data, bins=15, alpha=0.5, label='Treatment', color='#A23B72', edgecolor='black')
             ax2.legend()
             ax2.grid(True, alpha=0.3)
             ax2.set_xlabel('Value')
-            ax2.set_ylabel('Frequency')
+            ax2.set_ylabel('Count')
 
             plt.text(0.85, 0.02, f"Page 2 of {total_pages}", fontsize=10, color='gray', transform=fig2.transFigure)
             pdf.savefig(fig2)
             plt.close(fig2)
 
-            # ---------- 第三页（合并）或分页 ----------
+            # Page 3: Combined or separate
             if use_combined:
                 fig_combined, (ax_curve, ax_table) = plt.subplots(
-                    2, 1, figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4),
-                    gridspec_kw={'height_ratios': [CURVE_HEIGHT, table_height], 'hspace': 0.2}
+                    2, 1, figsize=(PAGE_WIDTH_MM/25.4, PAGE_HEIGHT_MM/25.4),
+                    gridspec_kw={'height_ratios': [CURVE_HEIGHT_MM, table_height], 'hspace': 0.3}
                 )
-                # 曲线
+                fig_combined.text(0.5, 0.97, "Figure 2: Power Curve & Descriptive Statistics",
+                                  fontsize=14, weight='bold', ha='center', transform=fig_combined.transFigure)
+
+                # Power curve
                 target_power = 0.8
-                def find_sample_size_for_power(eff, alpha, target_power=0.8, max_n=5000):
-                    for n in range(10, max_n, 5):
-                        if calc_power_curve(eff, alpha, n, n) >= target_power:
-                            return n
-                    return max_n
-                needed_n = find_sample_size_for_power(cohen_d, alpha)
+                needed_n = find_sample_size_for_power(cohen_d, alpha, target_power, 5000)
                 max_x = max(200, needed_n + 50)
                 max_x = min(max_x, 5000)
                 if max_x <= 200:
                     sample_sizes = np.arange(5, max_x+1, 5)
                 else:
                     sample_sizes = np.linspace(5, max_x, 100, dtype=int)
-                powers = [calc_power_curve(cohen_d, alpha, n, n) for n in sample_sizes]
+                powers = [calc_power(cohen_d, alpha, n, n) for n in sample_sizes]
                 ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
-                ax_curve.axhline(target_power, color='red', linestyle='--', alpha=0.7, label='80% Threshold')
+                ax_curve.axhline(target_power, color='red', linestyle='--', alpha=0.7, label='80% Target Power')
                 ax_curve.set_xlabel("Sample Size (per group)", fontsize=10)
                 ax_curve.set_ylabel("Statistical Power", fontsize=10)
-                ax_curve.set_title(f"Power Curve (α={alpha}, d={cohen_d:.2f})", fontsize=11)
+                ax_curve.set_title(f"Power Curve (alpha={alpha}, d={cohen_d:.2f})", fontsize=11)
                 ax_curve.legend(loc='lower right', fontsize=9)
                 ax_curve.grid(True, alpha=0.3)
                 ax_curve.tick_params(axis='both', labelsize=9)
                 ax_curve.set_ylim(0, 0.85)
-
-                if needed_n <= max_x:
-                    ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
-                    ax_curve.axvline(needed_n, color='gray', linestyle=':', alpha=0.5)  # 垂直辅助线
-                    ax_curve.legend(loc='lower right')
-
-                # 效应量标注放在右上角
-                effect_text = f"d = {cohen_d:.2f}"
-                if cohen_d < 0.2:
-                    effect_text += " (very small effect)"
-                elif cohen_d < 0.5:
-                    effect_text += " (small effect)"
-                else:
-                    effect_text += " (medium to large effect)"
-                ax_curve.text(0.65, 0.75, effect_text, fontsize=10, color='#333333',
-                              transform=ax_curve.transAxes, ha='left', va='top',
-                              bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
-
-                # 诊断文字移到图下方（作为 caption）
-                if cohen_d < 0.2 and needed_n > 500:
-                    note = "Tiny effect → very large sample needed. Consider redesign."
-                    if needed_n > 1000:
-                        note += " Such sample size is often impractical; consider focusing on a more impactful change."
-                elif needed_n > 200:
-                    note = f"To reach 80% power, need ~{needed_n} samples/group."
-                else:
-                    note = f"Power {current_power:.1%}; {needed_n} samples/group recommended."
-                fig_combined.text(0.05, 0.02, note, fontsize=8, color='#333333', ha='left')
-
-                # 表格（保留您微调的参数：fontsize=13, scale=1.44, bbox y=0.06）
-                ax_table.axis('off')
-                ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
-                ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
-                table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
-                                       colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.06, 0.95, 0.68])
-                table.auto_set_font_size(False)
-                table.set_fontsize(13)      # 您微调的值
-                table.scale(1, 1.44)        # 您微调的值
-                for (i, j), cell in table.get_celld().items():
-                    if i == 0:
-                        cell.set_facecolor('#1a3b5c')
-                        cell.set_text_props(weight='bold', color='white', fontsize=13)
-                    else:
-                        cell.set_facecolor('#f5f5f5' if i % 2 == 0 else 'white')
-
-                fig_combined.text(0.05, 0.96, header_text, fontsize=9, color='gray')
-                fig_combined.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray')
-                pdf.savefig(fig_combined)
-                plt.close(fig_combined)
-
-            else:
-                # 分页：曲线页
-                fig_curve = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
-                ax_curve = fig_curve.add_subplot(111)
-                target_power = 0.8
-                def find_sample_size_for_power(eff, alpha, target_power=0.8, max_n=5000):
-                    for n in range(10, max_n, 5):
-                        if calc_power_curve(eff, alpha, n, n) >= target_power:
-                            return n
-                    return max_n
-                needed_n = find_sample_size_for_power(cohen_d, alpha)
-                max_x = max(200, needed_n + 50)
-                max_x = min(max_x, 5000)
-                if max_x <= 200:
-                    sample_sizes = np.arange(5, max_x+1, 5)
-                else:
-                    sample_sizes = np.linspace(5, max_x, 100, dtype=int)
-                powers = [calc_power_curve(cohen_d, alpha, n, n) for n in sample_sizes]
-                ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
-                ax_curve.axhline(target_power, color='red', linestyle='--', alpha=0.7, label='80% Threshold')
-                ax_curve.set_xlabel("Sample Size (per group)", fontsize=10)
-                ax_curve.set_ylabel("Statistical Power", fontsize=10)
-                ax_curve.set_title(f"Power Curve (α={alpha}, d={cohen_d:.2f})", fontsize=11)
-                ax_curve.legend(loc='lower right', fontsize=9)
-                ax_curve.grid(True, alpha=0.3)
-                ax_curve.tick_params(axis='both', labelsize=9)
-                ax_curve.set_ylim(0, 0.85)
+                ax_curve.text(0.02, 0.90, "Note: Power curve assumes equal sample sizes per group. Unequal group sizes alter required sample size.",
+                              fontsize=7, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
+                ax_curve.text(0.02, 0.86, "Power curve uses observed Cohen's d; with small sample this is subject to sampling noise.",
+                              fontsize=7, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
 
                 if needed_n <= max_x:
                     ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
@@ -830,26 +964,22 @@ def generate_pdf_report(result):
                               bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
 
                 if cohen_d < 0.2 and needed_n > 500:
-                    note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re‑evaluating the experiment design."
+                    note = "Tiny effect → very large sample needed. Consider redesign."
+                    if needed_n > 1000:
+                        note += " Such sample size is often impractical; consider focusing on a more impactful change."
                 elif needed_n > 200:
-                    note = f"To reach 80% power, you need about {needed_n} samples per group. This may require extending the collection period."
+                    note = f"To reach 80% power, need ~{needed_n} samples/group."
                 else:
-                    note = f"Current power is {current_power:.1%}. About {needed_n} samples per group is recommended for 80% power."
-                # 移到图下方
-                fig_curve.text(0.05, 0.02, note, fontsize=8, color='#333333', ha='left')
+                    note = f"Power {current_power:.1%}; {needed_n} samples/group recommended."
+                fig_combined.text(0.05, 0.02, note, fontsize=8, color='#333333', ha='left')
 
-                fig_curve.text(0.05, 0.96, header_text, fontsize=9, color='gray')
-                fig_curve.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray')
-                pdf.savefig(fig_curve)
-                plt.close(fig_curve)
-
-                # 表格页（同样使用您微调的参数）
-                fig_table = plt.figure(figsize=(PAGE_WIDTH/25.4, PAGE_HEIGHT/25.4))
-                ax_table = fig_table.add_subplot(111)
+                # Table
                 ax_table.axis('off')
-                fig_table.text(0.05, 0.96, header_text, fontsize=9, color='gray')
-                ax_table.text(0.05, 0.85, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
-                ax_table.text(0.05, 0.78, f"Project: {project_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
+                ax_table.text(0.05, 0.90, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
+                ax_table.text(0.05, 0.84, f"Project: {proj_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
+                metric_name = proj_name.replace('.csv', '').replace('_', ' ').title()
+                ax_table.text(0.05, 0.80, f"Metric: {metric_name}", fontsize=10, color='#333333', transform=ax_table.transAxes)
+
                 table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
                                        colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.06, 0.95, 0.68])
                 table.auto_set_font_size(False)
@@ -860,30 +990,124 @@ def generate_pdf_report(result):
                         cell.set_facecolor('#1a3b5c')
                         cell.set_text_props(weight='bold', color='white', fontsize=13)
                     else:
-                        cell.set_facecolor('#f5f5f5' if i % 2 == 0 else 'white')
+                        if i % 2 == 0:
+                            cell.set_facecolor('#f5f5f5')
+                        else:
+                            cell.set_facecolor('white')
+                    if i > 0 and j > 0:
+                        cell.set_text_props(ha='right')
+
+                fig_combined.text(0.05, 0.96, header_text, fontsize=9, color='gray')
+                fig_combined.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray')
+                pdf.savefig(fig_combined)
+                plt.close(fig_combined)
+
+            else:
+                # Separate pages
+                # Page 3: Power Curve
+                fig_curve = plt.figure(figsize=(PAGE_WIDTH_MM/25.4, PAGE_HEIGHT_MM/25.4))
+                fig_curve.text(0.5, 0.97, "Figure 2: Power Curve",
+                               fontsize=14, weight='bold', ha='center', transform=fig_curve.transFigure)
+                ax_curve = fig_curve.add_subplot(111)
+                target_power = 0.8
+                needed_n = find_sample_size_for_power(cohen_d, alpha, target_power, 5000)
+                max_x = max(200, needed_n + 50)
+                max_x = min(max_x, 5000)
+                if max_x <= 200:
+                    sample_sizes = np.arange(5, max_x+1, 5)
+                else:
+                    sample_sizes = np.linspace(5, max_x, 100, dtype=int)
+                powers = [calc_power(cohen_d, alpha, n, n) for n in sample_sizes]
+                ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
+                ax_curve.axhline(target_power, color='red', linestyle='--', alpha=0.7, label='80% Target Power')
+                ax_curve.set_xlabel("Sample Size (per group)", fontsize=10)
+                ax_curve.set_ylabel("Statistical Power", fontsize=10)
+                ax_curve.set_title(f"Power Curve (alpha={alpha}, d={cohen_d:.2f})", fontsize=11)
+                ax_curve.legend(loc='lower right', fontsize=9)
+                ax_curve.grid(True, alpha=0.3)
+                ax_curve.tick_params(axis='both', labelsize=9)
+                ax_curve.set_ylim(0, 0.85)
+                ax_curve.text(0.02, 0.90, "Note: Power curve assumes equal sample sizes per group. Unequal group sizes alter required sample size.",
+                              fontsize=7, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
+                ax_curve.text(0.02, 0.86, "Power curve uses observed Cohen's d; with small sample this is subject to sampling noise.",
+                              fontsize=7, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
+
+                if needed_n <= max_x:
+                    ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
+                    ax_curve.axvline(needed_n, color='gray', linestyle=':', alpha=0.5)
+                    ax_curve.legend(loc='lower right')
+
+                effect_text = f"d = {cohen_d:.2f}"
+                if cohen_d < 0.2:
+                    effect_text += " (very small effect)"
+                elif cohen_d < 0.5:
+                    effect_text += " (small effect)"
+                else:
+                    effect_text += " (medium to large effect)"
+                ax_curve.text(0.65, 0.75, effect_text, fontsize=10, color='#333333',
+                              transform=ax_curve.transAxes, ha='left', va='top',
+                              bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
+
+                if cohen_d < 0.2 and needed_n > 500:
+                    note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re-evaluating the experiment design."
+                elif needed_n > 200:
+                    note = f"To reach 80% power, you need about {needed_n} samples per group. This may require extending the collection period."
+                else:
+                    note = f"Current power is {current_power:.1%}. About {needed_n} samples per group is recommended for 80% power."
+                fig_curve.text(0.05, 0.02, note, fontsize=8, color='#333333', ha='left')
+
+                fig_curve.text(0.05, 0.96, header_text, fontsize=9, color='gray')
+                fig_curve.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray')
+                pdf.savefig(fig_curve)
+                plt.close(fig_curve)
+
+                # Page 4: Descriptive Statistics
+                fig_table = plt.figure(figsize=(PAGE_WIDTH_MM/25.4, PAGE_HEIGHT_MM/25.4))
+                fig_table.text(0.5, 0.97, "Figure 3: Descriptive Statistics",
+                               fontsize=14, weight='bold', ha='center', transform=fig_table.transFigure)
+                ax_table = fig_table.add_subplot(111)
+                ax_table.axis('off')
+                fig_table.text(0.05, 0.96, header_text, fontsize=9, color='gray')
+                ax_table.text(0.05, 0.90, "DESCRIPTIVE STATISTICS", fontsize=14, weight='bold', color='#1a3b5c', transform=ax_table.transAxes)
+                ax_table.text(0.05, 0.84, f"Project: {proj_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
+                metric_name = proj_name.replace('.csv', '').replace('_', ' ').title()
+                ax_table.text(0.05, 0.80, f"Metric: {metric_name}", fontsize=10, color='#333333', transform=ax_table.transAxes)
+
+                table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
+                                       colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.06, 0.95, 0.68])
+                table.auto_set_font_size(False)
+                table.set_fontsize(13)
+                table.scale(1, 1.44)
+                for (i, j), cell in table.get_celld().items():
+                    if i == 0:
+                        cell.set_facecolor('#1a3b5c')
+                        cell.set_text_props(weight='bold', color='white', fontsize=13)
+                    else:
+                        if i % 2 == 0:
+                            cell.set_facecolor('#f5f5f5')
+                        else:
+                            cell.set_facecolor('white')
+                    if i > 0 and j > 0:
+                        cell.set_text_props(ha='right')
+
+                fig_table.text(0.05, 0.96, header_text, fontsize=9, color='gray')
                 fig_table.text(0.85, 0.02, f"Page 4 of {total_pages}", fontsize=10, color='gray')
                 pdf.savefig(fig_table)
                 plt.close(fig_table)
 
         buffer.seek(0)
-        st.session_state.last_report_id = report_id
         return buffer.getvalue(), report_id
 
     except Exception as e:
-        import traceback
-        st.exception(e)
-        st.error(f"Result keys: {list(result.keys())}")
-        st.error(f"m_c={result.get('m_c')}, m_t={result.get('m_t')}, s_c={result.get('s_c')}, s_t={result.get('s_t')}, cohen_d={result.get('cohen_d')}, alpha={result.get('alpha')}, power={result.get('current_power')}")
-        st.error(f"ci_low={result.get('ci_low')}, ci_high={result.get('ci_high')}")
-        print(traceback.format_exc())
-        return b"", "ERROR"
+        print(f"PDF generation error: {e}")
+        return None, None
+
+
 # ========== 主逻辑 ==========
 st.title("📊 A/B Test Pro")
 st.markdown("**Upload your CSV to automatically compute statistical significance, power curves, and professional PDF reports.**")
 
-check_webhook_unlock()
-
-# ========== 数据上传处理 ==========
+# 批量模式
 if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'founder']:
     st.subheader(f"📂 Batch Processing: {len(st.session_state.batch_files)} files")
     if st.button("🚀 Run Batch Analysis"):
@@ -892,11 +1116,14 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
         progress_bar = st.progress(0)
         status_text = st.empty()
         total_files = len(st.session_state.batch_files)
-        
+
         for idx, file in enumerate(st.session_state.batch_files):
             status_text.text(f"Processing: {file.name} ({idx+1}/{total_files})")
             try:
-                df = pd.read_csv(file).fillna(np.nan)
+                try:
+                    df = pd.read_csv(file).fillna(np.nan)
+                except UnicodeDecodeError:
+                    df = pd.read_csv(file, encoding='gbk').fillna(np.nan)
                 if df.empty or df.columns.empty:
                     st.warning(f"⚠️ Skipping {file.name}: file is empty or has no columns.")
                     continue
@@ -904,18 +1131,16 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
                 if len(numeric_cols) < 2:
                     st.warning(f"⚠️ Skipping {file.name}: need at least 2 numeric columns.")
                     continue
-                result = analyze_single_file(df, file.name)
+                result = analyze_single_file(df, file.name, project_name=file.name)
                 if 'error' in result:
                     st.warning(f"⚠️ Skipping {file.name}: {result['error']}")
                     continue
-                # 校验关键字段
                 required_keys = ['m_c', 'm_t', 'cohen_d', 'alpha', 'current_power']
                 if any(key not in result or not is_valid_number(result[key]) for key in required_keys):
                     st.error(f"❌ Skipping {file.name}: computed value is invalid (NaN/None), cannot render PDF")
                     st.session_state.batch_results[file.name] = {"error": "invalid computed value"}
                     continue
-                st.session_state.uploaded_file_name = file.name
-                pdf_data, report_id = generate_pdf_report(result)
+                pdf_data, report_id = generate_pdf_report(result, project_name=file.name)
                 if not pdf_data:
                     st.error(f"❌ Skipping {file.name}: PDF generation returned empty data.")
                     st.session_state.batch_results[file.name] = {"error": "PDF generation failed"}
@@ -926,12 +1151,12 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
                 st.error(f"❌ Error processing {file.name}: {str(e)}")
                 st.session_state.batch_results[file.name] = {"error": str(e)}
             progress_bar.progress((idx + 1) / total_files)
-        
+
         status_text.text("✅ Batch analysis complete!")
         st.session_state.is_processing = False
         st.session_state.analysis_done = True
         st.rerun()
-    
+
     if st.session_state.analysis_done and st.session_state.batch_results:
         tabs = st.tabs([name for name in st.session_state.batch_results.keys()])
         for tab, (name, result) in zip(tabs, st.session_state.batch_results.items()):
@@ -944,107 +1169,109 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
             valid_pdfs = {name: res['pdf_data'] for name, res in st.session_state.batch_results.items() if "pdf_data" in res}
             if valid_pdfs:
                 if st.button("📦 Download All PDFs (ZIP)"):
-                    import zipfile
                     zip_buffer = io.BytesIO()
-                    with zipfile.ZipFile(zip_buffer, 'w') as zf:
-                        for name, pdf_data in valid_pdfs.items():
-                            pdf_filename = f"ABTest_{name.replace('.csv','')}_{datetime.now().strftime('%Y%m%d')}.pdf"
-                            zf.writestr(pdf_filename, pdf_data)
-                    zip_buffer.seek(0)
-                    st.download_button(
-                        label="⬇️ Download ZIP",
-                        data=zip_buffer,
-                        file_name=f"ABTest_Batch_{datetime.now().strftime('%Y%m%d')}.zip",
-                        mime="application/zip",
-                        key="download_all_zip"
-                    )
+                    try:
+                        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                            for name, pdf_data in valid_pdfs.items():
+                                pdf_filename = f"ABTest_{name.replace('.csv','')}_{datetime.now().strftime('%Y%m%d')}.pdf"
+                                zf.writestr(pdf_filename, pdf_data)
+                        zip_buffer.seek(0)
+                        st.download_button(
+                            label="⬇️ Download ZIP",
+                            data=zip_buffer.getvalue(),
+                            file_name=f"ABTest_Batch_{datetime.now().strftime('%Y%m%d')}.zip",
+                            mime="application/zip",
+                            key="download_all_zip"
+                        )
+                    finally:
+                        zip_buffer.close()
             else:
                 st.info("ℹ️ No valid PDFs generated in this batch.")
-    st.stop()
 
-# ========== 单文件模式 ==========
+# 单文件模式
 elif uploaded_file is not None:
     if uploaded_file.size > MAX_FILE_SIZE:
         st.error(f"❌ File exceeds 5MB limit. Current size: {uploaded_file.size/1024/1024:.1f}MB. Please sample your data.")
         st.stop()
-    
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp_file:
-        tmp_file.write(uploaded_file.getvalue())
-        tmp_path = tmp_file.name
-    
+
+    tmp_path = None
     try:
-        df = pd.read_csv(tmp_path)
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp_file:
+            tmp_file.write(uploaded_file.getvalue())
+            tmp_path = tmp_file.name
+        try:
+            df = pd.read_csv(tmp_path)
+        except UnicodeDecodeError:
+            df = pd.read_csv(tmp_path, encoding='gbk')
         st.session_state.uploaded_file_name = uploaded_file.name
+        st.session_state.analysis_result = None
     except Exception as e:
         st.error(f"Error reading CSV: {e}")
-        os.unlink(tmp_path)
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
         st.stop()
-    
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
+
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     if len(numeric_cols) < 2:
         st.error("❌ Need at least 2 numeric columns for analysis.")
-        os.unlink(tmp_path)
         st.stop()
-    
+
     col1, col2 = st.columns(2)
     with col1:
         control_col = st.selectbox("Control Group (numeric)", numeric_cols, key="ctrl")
     with col2:
         treatment_col = st.selectbox("Treatment Group (numeric)", numeric_cols, key="trt")
-    
+
     if control_col == treatment_col:
         st.warning("⚠️ Control and Treatment columns must be different.")
-        os.unlink(tmp_path)
         st.stop()
-    
+
     if st.button("📊 Run Analysis", type="primary"):
         if st.session_state.user_plan == 'free' and not check_free_quota():
             st.warning(f"🔒 Free trial limit reached ({FREE_TRIAL_LIMIT} per day). Please upgrade to continue.")
-            os.unlink(tmp_path)
             st.stop()
-        
+
         with st.spinner("🧹 Cleaning data and running analysis..."):
             df_clean = df[[control_col, treatment_col]].copy().dropna()
+            removed_outliers = 0
             if st.session_state.remove_outliers:
                 Q1 = df_clean.quantile(0.25)
                 Q3 = df_clean.quantile(0.75)
                 IQR = Q3 - Q1
-                mask = ~((df_clean < (Q1 - 1.5 * IQR)) | (df_clean > (Q3 + 1.5 * IQR))).any(axis=1)
-                removed = len(df_clean) - mask.sum()
+                mask = ((df_clean >= (Q1 - 1.5 * IQR)) & (df_clean <= (Q3 + 1.5 * IQR))).all(axis=1)
+                removed_outliers = len(df_clean) - mask.sum()
                 df_clean = df_clean[mask]
-                if removed > 0:
-                    st.info(f"🧹 Removed {removed} rows with outliers (Listwise Deletion).")
+                if removed_outliers > 0:
+                    st.info(f"🧹 Removed {removed_outliers} rows with outliers (Listwise Deletion).")
             control_data = df_clean[control_col].dropna()
             treatment_data = df_clean[treatment_col].dropna()
             if len(control_data) < 3 or len(treatment_data) < 3:
                 st.error("❌ Need at least 3 valid samples per group.")
-                os.unlink(tmp_path)
                 st.stop()
-            
+
             result = perform_statistical_tests(control_data, treatment_data)
             result['control_col'] = control_col
             result['treatment_col'] = treatment_col
             result['control_data'] = control_data
             result['treatment_data'] = treatment_data
             result['df_clean'] = df_clean
-            result['removed_outliers'] = removed if st.session_state.remove_outliers else 0
-            
+            result['removed_outliers'] = removed_outliers
+
             if st.session_state.user_plan == 'free':
                 increment_free_usage()
-            
+
             st.session_state.analysis_result = result
             st.session_state.analysis_done = True
             st.rerun()
-        
-        os.unlink(tmp_path)
-    
+
     if st.session_state.analysis_done and hasattr(st.session_state, 'analysis_result'):
         display_results(st.session_state.analysis_result)
-    
-    try:
-        os.unlink(tmp_path)
-    except:
-        pass
 
 else:
     st.info("👈 Please upload a CSV file to begin.")
@@ -1066,4 +1293,4 @@ B,21.8,26.8
         st.download_button("⬇️ Download Template", data=csv_data, file_name="template.csv", mime="text/csv")
 
 st.markdown("---")
-st.caption(f"📌 All data processed locally. No data uploaded. © {datetime.now().year} A/B Test Pro")
+st.caption(f"📌 Uploaded CSV files are processed locally and not stored on our servers. Account data is securely stored. © {datetime.now().year} A/B Test Pro")
