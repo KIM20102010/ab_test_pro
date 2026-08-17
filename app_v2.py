@@ -36,6 +36,12 @@ CURVE_HEIGHT_MM = 100
 TABLE_ROW_HEIGHT_MM = 5.5
 A4_FIGSIZE_INCHES = (8.5, 11)
 
+# 如果外部未定义，使用默认值
+try:
+    A4_FIGSIZE_INCHES = (PAGE_WIDTH_MM/25.4, PAGE_HEIGHT_MM/25.4)
+except NameError:
+    pass
+
 # ========= 报告ID计数器 =========
 if "report_counter" not in st.session_state:
     st.session_state.report_counter = 0
@@ -850,19 +856,17 @@ def generate_pdf_report(result, project_name=None):
             if removed_outliers > 0:
                 plt.text(LEFT_MARGIN, 0.59, f"Outliers removed (IQR): {removed_outliers} rows", fontsize=9, color='#333333', transform=fig1.transFigure)
 
-            plt.text(LEFT_MARGIN, 0.54, "EXECUTIVE SUMMARY", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-            # 拆分换行文本
+            plt.text(LEFT_MARGIN, 0.56, "EXECUTIVE SUMMARY", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
             summary_lines = summary_line1.split('\n')
-            y_pos = 0.49
+            # 🛡️ 截断保护：最多只显示3行，避免极端长文本挤压下方内容
+            if len(summary_lines) > 3:
+                summary_lines = summary_lines[:3]
+            y_pos = 0.52
             for i, line in enumerate(summary_lines):
-                plt.text(LEFT_MARGIN, y_pos - i*0.04, line, fontsize=12, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-            y_pos = 0.49 - (len(summary_lines))*0.04 + 0.00   # 相当于抬高 0.04
+                plt.text(LEFT_MARGIN, y_pos - i*0.035, line, fontsize=12, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+            # (p=...) 行上移
+            y_pos = 0.52 - (len(summary_lines))*0.035 - 0.00
             plt.text(LEFT_MARGIN, y_pos, summary_line2, fontsize=11, color='#C62828', transform=fig1.transFigure)
-            y_pos -= 0.04
-            if lift_unreliable:
-                plt.text(LEFT_MARGIN, y_pos, "⚠️ Control mean close to zero; relative change unreliable.", fontsize=9, color='#C62828', transform=fig1.transFigure)
-            else:
-                plt.text(LEFT_MARGIN, y_pos, "Relative change = (Treatment - Control) / Control", fontsize=9, color='gray', transform=fig1.transFigure)
             y_pos -= 0.04
 
             plt.text(LEFT_MARGIN, y_pos, "KEY METRICS", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
