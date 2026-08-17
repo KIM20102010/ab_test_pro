@@ -856,7 +856,7 @@ def generate_pdf_report(result, project_name=None):
             y_pos = 0.49
             for i, line in enumerate(summary_lines):
                 plt.text(LEFT_MARGIN, y_pos - i*0.04, line, fontsize=12, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-            y_pos = 0.49 - (len(summary_lines))*0.04 - 0.04
+            y_pos = 0.49 - (len(summary_lines))*0.04 + 0.00   # 相当于抬高 0.04
             plt.text(LEFT_MARGIN, y_pos, summary_line2, fontsize=11, color='#C62828', transform=fig1.transFigure)
             y_pos -= 0.04
             if lift_unreliable:
@@ -889,12 +889,12 @@ def generate_pdf_report(result, project_name=None):
             warnings.append("Warning: Repeatedly peeking at results and stopping early inflates false‑positive rate.")
             warnings.append("Note: This report evaluates a single metric only. Multiple metrics require multiplicity correction.")
             # 起始 y 上移 0.02，间距增大到 0.028
-            y_pos = 0.10  # 原来约为 0.13，现上移
+            y_pos = 0.13  # 原来约为 0.13，现上移
             for txt in warnings:
                 if y_pos < BOTTOM_MARGIN + 0.02:
                     break
                 plt.text(LEFT_MARGIN, y_pos, txt, fontsize=8, color='#C62828' if '⚠️' in txt else 'gray', transform=fig1.transFigure)
-                y_pos -= 0.028   # 间距增大
+                y_pos -= 0.032   # 间距增大
 
             plt.text(LEFT_MARGIN, BOTTOM_MARGIN, "Confidential — for internal use only", fontsize=9, color='gray', transform=fig1.transFigure)
             plt.text(0.85, PAGE_BOTTOM, f"Page 1 of {total_pages}", fontsize=10, color='gray', transform=fig1.transFigure)
@@ -986,7 +986,7 @@ def generate_pdf_report(result, project_name=None):
                     note = f"To reach 80% power, need ~{needed_n} samples/group."
                 else:
                     note = f"Power {current_power:.1%}; {needed_n} samples/group recommended."
-                note = textwrap.fill(note, width=55)   # 改为55，压缩成两行
+                note = textwrap.fill(note, width=66)   # 改为55，压缩成两行
                 fig_combined.text(0.05, 0.035, note, fontsize=8, color='#333333', ha='left', transform=fig_combined.transFigure)
 
                 # 表格（移除数值列右对齐，全部居中）
