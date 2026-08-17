@@ -143,17 +143,20 @@ def sign_up(email, password):
     try:
         resp = supabase.auth.sign_up({"email": email, "password": password})
         if resp.user:
-            # 等待 profile 创建（触发器自动创建），但可能需要短暂等待
             time.sleep(0.5)  # 给触发器一点时间
             return True, "Account created successfully."
         else:
-            return False, "Registration failed. Please try again."
+            # 如果 resp.user 为空，可能注册失败，尝试获取错误信息
+            error_msg = getattr(resp, 'error', 'Unknown error')
+            return False, f"Registration failed: {error_msg}"
     except Exception as e:
         error_msg = str(e)
+        # 如果是用户已存在，给友好提示
         if "User already registered" in error_msg:
             return False, "Email already registered."
-        print(f"Sign up error: {e}")
-        return False, "Registration failed. Please try again."
+        # 否则返回具体错误，便于调试
+        print(f"Sign up error: {error_msg}")
+        return False, f"Registration failed: {error_msg}"
 
 def login(email, password):
     try:
