@@ -329,22 +329,20 @@ if not st.session_state.authenticated:
                         reg_ok, reg_msg = sign_up(email, password)
                         if reg_ok:
                             st.success("✅ Account created! You are now logged in.")
-                            # 自动登录（重新调用 login，增加重试）
-                            for _ in range(3):  # 重试3次
-                                time.sleep(0.5)
-                                success2, profile2, err2 = login(email, password)
-                                if success2 and profile2:
-                                    st.session_state.authenticated = True
-                                    st.session_state.user_email = email
-                                    st.session_state.user_plan = profile2.get('plan', 'free')
-                                    st.session_state.free_usage_count = profile2.get('free_usage_count', 0)
-                                    st.session_state.free_usage_date = profile2.get('free_usage_date')
-                                    if st.session_state.user_plan != 'free':
-                                        st.session_state.unlocked = True
-                                    st.rerun()
-                                    break
+                            # 直接获取 profile，不调用 login（避免失败计数）
+                            profile = fetch_user_profile(email)
+                            if profile:
+                                st.session_state.authenticated = True
+                                st.session_state.user_email = email
+                                st.session_state.user_plan = profile.get('plan', 'free')
+                                st.session_state.free_usage_count = profile.get('free_usage_count', 0)
+                                st.session_state.free_usage_date = profile.get('free_usage_date')
+                                if st.session_state.user_plan != 'free':
+                                    st.session_state.unlocked = True
+                                st.rerun()
                             else:
-                                st.error("Login after registration failed. Please log in manually.")
+                                # 如果 profile 仍未就绪，给用户明确提示
+                                st.error("Account created, but profile not ready. Please try logging in manually.")
                         else:
                             st.error(reg_msg or "Registration failed.")
     st.caption("📌 By signing up, you agree to our Terms of Service and Privacy Policy.")
