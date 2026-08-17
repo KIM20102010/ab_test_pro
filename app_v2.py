@@ -994,7 +994,7 @@ def generate_pdf_report(result, project_name=None):
                 else:
                     note = f"Power {current_power:.1%}; {needed_n} samples/group recommended."
                 note = textwrap.fill(note, width=66)   # 改为55，压缩成两行
-                fig_combined.text(0.05, 0.035, note, fontsize=8, color='#333333', ha='left', transform=fig_combined.transFigure)
+                fig_combined.text(0.05, 0.035, note, fontsize=8, color='#333333', ha='left', multialignment='left', transform=fig_combined.transFigure)
 
                 # 表格（移除数值列右对齐，全部居中）
                 ax_table.axis('off')
@@ -1073,7 +1073,7 @@ def generate_pdf_report(result, project_name=None):
                 else:
                     note = f"Current power is {current_power:.1%}. About {needed_n} samples per group is recommended for 80% power."
                 note = textwrap.fill(note, width=55)
-                fig_curve.text(0.05, 0.035, note, fontsize=8, color='#333333', ha='left', transform=fig_curve.transFigure)
+                fig_curve.text(0.05, 0.035, note, fontsize=8, color='#333333', ha='left', multialignment='left', transform=fig_curve.transFigure)
                 fig_curve.text(0.05, 0.96, header_text, fontsize=9, color='gray', transform=fig_curve.transFigure)
                 fig_curve.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray', transform=fig_curve.transFigure)
                 pdf.savefig(fig_curve)
