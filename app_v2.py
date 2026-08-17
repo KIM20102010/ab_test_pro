@@ -687,6 +687,22 @@ def display_results(result):
                 key=f"lock_btn_{btn_key}"
             )
             st.caption("💡 Free users can preview all metrics and charts. Upgrade to download PDF reports with your logo.")
+def split_max_two_lines(text, max_chars=55):
+    """
+    将文本最多切分成2行，在空格处断开，不丢失内容，不会产出3行及以上。
+    适用于 PDF 底部诊断文字，避免三行挤占页码。
+    """
+    if len(text) <= max_chars:
+        return text
+    # 在 max_chars 往前找最近空格
+    idx = text.rfind(' ', 0, max_chars)
+    if idx == -1:
+        # 如果找不到空格，强行在 max_chars 处截断
+        idx = max_chars
+    line1 = text[:idx].strip()
+    line2 = text[idx:].strip()
+    # 只切一次，剩余全部放第二行，保证总共就2行
+    return f"{line1}\n{line2}"
 
 # ========== PDF生成函数（异常返回None） ==========
 def generate_pdf_report(result, project_name=None):
@@ -985,6 +1001,7 @@ def generate_pdf_report(result, project_name=None):
                               bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
 
                 # 底部诊断文字（自动换行，宽度调为55以压缩为两行）
+                                # 底部诊断文字（使用 split_max_two_lines，保证最多2行）
                 if cohen_d < 0.2 and needed_n > 500:
                     note = "Tiny effect → very large sample needed. Consider redesign."
                     if needed_n > 1000:
@@ -993,9 +1010,8 @@ def generate_pdf_report(result, project_name=None):
                     note = f"To reach 80% power, need ~{needed_n} samples/group."
                 else:
                     note = f"Power {current_power:.1%}; {needed_n} samples/group recommended."
-                note = textwrap.fill(note, width=66)   # 改为55，压缩成两行
-                fig_combined.text(0.05, 0.035, note, fontsize=8, color='#333333', ha='left', multialignment='left', transform=fig_combined.transFigure)
-
+                note = split_max_two_lines(note, max_chars=55)   # 替换 textwrap.fill
+                fig_combined.text(0.05, 0.06, note, fontsize=7.5, color='#333333', ha='left', transform=fig_combined.transFigure)
                 # 表格（移除数值列右对齐，全部居中）
                 ax_table.axis('off')
                 ax_table.text(0.05, 0.86, f"Project: {proj_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
@@ -1054,6 +1070,15 @@ def generate_pdf_report(result, project_name=None):
                     ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
                     ax_curve.axvline(needed_n, color='gray', linestyle=':', alpha=0.5)
                     ax_curve.legend(loc='lower right')
+                # ----- 诊断文字（分页曲线页） -----
+                if cohen_d < 0.2 and needed_n > 500:
+                    note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re-evaluating the experiment design."
+                elif needed_n > 200:
+                    note = f"To reach 80% power, you need about {needed_n} samples per group. This may require extending the collection period."
+                else:
+                    note = f"Current power is {current_power:.1%}. About {needed_n} samples per group is recommended for 80% power."
+                note = split_max_two_lines(note, max_chars=55)
+                fig_curve.text(0.05, 0.06, note, fontsize=7.5, color='#333333', ha='left', transform=fig_curve.transFigure)
 
                 effect_text = f"d = {cohen_d:.2f}"
                 if cohen_d < 0.2:
