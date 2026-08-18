@@ -909,21 +909,22 @@ def generate_pdf_report(result, project_name=None):
             plt.text(LEFT_MARGIN, y_pos, "Statistical test: Welch's t‑test (two‑tailed, unequal variance) | Cohen's d uses pooled variance", fontsize=9, color='gray', transform=fig1.transFigure)
             y_pos -= 0.03
 
-            # 警告文本（调整起始位置整体上移，避免和页脚拥挤）
+            # 警告文本：继承上面文本的y_pos，向下空0.04的空白，不写死固定y值
             warnings = []
             if not is_powered:
-                warnings.append("⚠️ Low power. Aim for more samples.")
+                warnings.append("[!] Low power. Aim for more samples.")
             warnings.append("Note: t‑test assumes approximate normality. For heavily skewed data, consider Mann‑Whitney U.")
             warnings.append("Warning: Repeatedly peeking at results and stopping early inflates false‑positive rate.")
             warnings.append("Note: This report evaluates a single metric only. Multiple metrics require multiplicity correction.")
-            
-            # ========= 核心改动：初始y从0.13上调到0.17，整块警告全部向上移动 =========
-            y_pos = 0.19
+
+            # 在上面最后一行文本的基础上，向下留出0.04空白，动态计算起始位置，杜绝和上方文字重叠
+            y_pos = y_pos - 0.04
+
             for txt in warnings:
                 if y_pos < BOTTOM_MARGIN + 0.02:
                     break
-                plt.text(LEFT_MARGIN, y_pos, txt, fontsize=8, color='#C62828' if '⚠️' in txt else 'gray', transform=fig1.transFigure)
-                y_pos -= 0.032   # 行间距保持不变
+                plt.text(LEFT_MARGIN, y_pos, txt, fontsize=8, color='#C62828' if '[!]' in txt else 'gray', transform=fig1.transFigure)
+                y_pos -= 0.032
 
             plt.text(LEFT_MARGIN, BOTTOM_MARGIN - 0.02, "Confidential — for internal use only", fontsize=9, color='gray', transform=fig1.transFigure)
             plt.text(0.85, PAGE_BOTTOM, f"Page 1 of {total_pages}", fontsize=10, color='gray', transform=fig1.transFigure)
@@ -932,28 +933,30 @@ def generate_pdf_report(result, project_name=None):
             plt.close(fig1)
 
             # ---------- 第二页 ----------
-            fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=A4_FIGSIZE_INCHES, gridspec_kw={'hspace': 0.35})
+            fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=A4_FIGSIZE_INCHES, gridspec_kw={'hspace': 0.38})
             fig2.text(0.05, 0.97, header_text, fontsize=9, color='gray')
-            fig2.text(0.5, 0.94, "Figure 1: Distribution Comparison", fontsize=14, weight='bold', ha='center', transform=fig2.transFigure)
-
+            # 标题y从0.94下调到0.92，远离顶部页眉，避免未来窜入页眉
+            fig2.text(0.5, 0.92, "Figure 1: Distribution Comparison", fontsize=14, weight='bold', ha='center', transform=fig2.transFigure)
+            
             bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
             for patch, color in zip(bp['boxes'], ['#2E86AB', '#A23B72']):
                 patch.set_facecolor(color)
             ax1.scatter(1, m_c, color='yellow', s=100, zorder=5, label=f"Control Mean: {m_c:.3f}")
             ax1.scatter(2, m_t, color='yellow', s=100, zorder=5, label=f"Treatment Mean: {m_t:.3f}")
-            ax1.legend(loc='upper left')
+            # 改动：缩小图例字体、缩小内边距，防止图例过大挤压图表
+            ax1.legend(loc='upper left', fontsize=9, borderpad=0.5)
             ax1.grid(True, alpha=0.3)
             ax1.set_ylabel('Value')
-            ax1.text(0.02, 0.02, "Box-plot: center line = median; white dot = sample mean; whiskers = 1.5×IQR",
+            ax1.text(0.02, 0.02, "Box‑plot: center line = median; white dot = sample mean; whiskers = 1.5×IQR",
                      fontsize=7, color='gray', transform=ax1.transAxes)
-
+            
             ax2.hist(control_data, bins=15, alpha=0.5, label='Control', color='#2E86AB', edgecolor='black')
             ax2.hist(treatment_data, bins=15, alpha=0.5, label='Treatment', color='#A23B72', edgecolor='black')
-            ax2.legend()
+            ax2.legend(fontsize=9)
             ax2.grid(True, alpha=0.3)
             ax2.set_xlabel('Value')
             ax2.set_ylabel('Count')
-
+            
             plt.text(0.85, PAGE_BOTTOM, f"Page 2 of {total_pages}", fontsize=10, color='gray', transform=fig2.transFigure)
             pdf.savefig(fig2)
             plt.close(fig2)
@@ -964,7 +967,8 @@ def generate_pdf_report(result, project_name=None):
                     2, 1, figsize=(PAGE_WIDTH_MM/25.4, PAGE_HEIGHT_MM/25.4),
                     gridspec_kw={'height_ratios': [CURVE_HEIGHT_MM, table_height], 'hspace': 0.3}
                 )
-                fig_combined.text(0.5, 0.93, "Figure 2: Power Curve & Descriptive Statistics",
+                # 标题y从0.93下调到0.91，远离顶部页眉
+                fig_combined.text(0.5, 0.91, "Figure 2: Power Curve & Descriptive Statistics",
                                   fontsize=14, weight='bold', ha='center', transform=fig_combined.transFigure)
 
                 target_power = 0.8
@@ -985,9 +989,10 @@ def generate_pdf_report(result, project_name=None):
                 ax_curve.grid(True, alpha=0.3)
                 ax_curve.tick_params(axis='both', labelsize=9)
                 ax_curve.set_ylim(0, 0.85)
+                # 拉开两条note的y间距：0.90 →0.90；0.86→0.82
                 ax_curve.text(0.02, 0.90, "Note: Power curve assumes equal sample sizes per group. Unequal group sizes alter required sample size.",
                               fontsize=7, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
-                ax_curve.text(0.02, 0.86, "Power curve uses observed Cohen's d; with small sample this is subject to sampling noise.",
+                ax_curve.text(0.02, 0.82, "Power curve uses observed Cohen's d; with small sample this is subject to sampling noise.",
                               fontsize=7, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
 
                 if needed_n <= max_x:
@@ -1006,8 +1011,7 @@ def generate_pdf_report(result, project_name=None):
                               transform=ax_curve.transAxes, ha='left', va='top',
                               bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
 
-                # 底部诊断文字（自动换行，宽度调为55以压缩为两行）
-                                # 底部诊断文字（使用 split_max_two_lines，保证最多2行）
+                # 底部诊断文字：y从0.06上调至0.09，远离底部页码；增加multialignment='left'
                 if cohen_d < 0.2 and needed_n > 500:
                     note = "Tiny effect → very large sample needed. Consider redesign."
                     if needed_n > 1000:
@@ -1016,12 +1020,14 @@ def generate_pdf_report(result, project_name=None):
                     note = f"To reach 80% power, need ~{needed_n} samples/group."
                 else:
                     note = f"Power {current_power:.1%}; {needed_n} samples/group recommended."
-                note = split_max_two_lines(note, max_chars=55)   # 替换 textwrap.fill
-                fig_combined.text(0.05, 0.06, note, fontsize=7.5, color='#333333', ha='left', transform=fig_combined.transFigure)
-                # 表格（移除数值列右对齐，全部居中）
+                note = split_max_two_lines(note, max_chars=55)
+                fig_combined.text(0.05, 0.09, note, fontsize=7.5, color='#333333', ha='left',
+                                  multialignment='left', transform=fig_combined.transFigure)
+
+                # 表格区域：两行文本y差值加大：0.86 /0.79 →0.86 /0.74，拉开行间距
                 ax_table.axis('off')
                 ax_table.text(0.05, 0.86, f"Project: {proj_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
-                ax_table.text(0.05, 0.79, f"Metric: {proj_name.replace('.csv','').replace('_',' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
+                ax_table.text(0.05, 0.74, f"Metric: {proj_name.replace('.csv','').replace('_',' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
 
                 table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
                                        colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.06, 0.95, 0.68])
@@ -1034,8 +1040,6 @@ def generate_pdf_report(result, project_name=None):
                         cell.set_text_props(weight='bold', color='white', fontsize=13)
                     else:
                         cell.set_facecolor('#f5f5f5' if i % 2 == 0 else 'white')
-                    # 移除 ha='right'，让所有单元格居中
-                    # 不设置 ha，默认居中
 
                 fig_combined.text(0.05, 0.96, header_text, fontsize=9, color='gray', transform=fig_combined.transFigure)
                 fig_combined.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray', transform=fig_combined.transFigure)
@@ -1045,7 +1049,7 @@ def generate_pdf_report(result, project_name=None):
             else:
                 # 分页：曲线页（第三页）
                 fig_curve = plt.figure(figsize=(PAGE_WIDTH_MM/25.4, PAGE_HEIGHT_MM/25.4))
-                fig_curve.text(0.5, 0.93, "Figure 2: Power Curve",
+                fig_curve.text(0.5, 0.91, "Figure 2: Power Curve",
                                fontsize=14, weight='bold', ha='center', transform=fig_curve.transFigure)
                 ax_curve = fig_curve.add_subplot(111)
                 # 绘制曲线（与合并页相同）
@@ -1069,14 +1073,15 @@ def generate_pdf_report(result, project_name=None):
                 ax_curve.set_ylim(0, 0.85)
                 ax_curve.text(0.02, 0.90, "Note: Power curve assumes equal sample sizes per group. Unequal group sizes alter required sample size.",
                               fontsize=7, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
-                ax_curve.text(0.02, 0.86, "Power curve uses observed Cohen's d; with small sample this is subject to sampling noise.",
+                ax_curve.text(0.02, 0.82, "Power curve uses observed Cohen's d; with small sample this is subject to sampling noise.",
                               fontsize=7, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
 
                 if needed_n <= max_x:
                     ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
                     ax_curve.axvline(needed_n, color='gray', linestyle=':', alpha=0.5)
                     ax_curve.legend(loc='lower right')
-                # ----- 诊断文字（分页曲线页） -----
+
+                # ----- 诊断文字（分页曲线页） 修复重复赋值bug -----
                 if cohen_d < 0.2 and needed_n > 500:
                     note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re-evaluating the experiment design."
                 elif needed_n > 200:
@@ -1084,7 +1089,9 @@ def generate_pdf_report(result, project_name=None):
                 else:
                     note = f"Current power is {current_power:.1%}. About {needed_n} samples per group is recommended for 80% power."
                 note = split_max_two_lines(note, max_chars=55)
-                fig_curve.text(0.05, 0.06, note, fontsize=7.5, color='#333333', ha='left', transform=fig_curve.transFigure)
+                # y上调，远离页码，开启multialignment
+                fig_curve.text(0.05, 0.09, note, fontsize=7.5, color='#333333', ha='left',
+                               multialignment='left', transform=fig_curve.transFigure)
 
                 effect_text = f"d = {cohen_d:.2f}"
                 if cohen_d < 0.2:
@@ -1097,14 +1104,6 @@ def generate_pdf_report(result, project_name=None):
                               transform=ax_curve.transAxes, ha='left', va='top',
                               bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
 
-                if cohen_d < 0.2 and needed_n > 500:
-                    note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re-evaluating the experiment design."
-                elif needed_n > 200:
-                    note = f"To reach 80% power, you need about {needed_n} samples per group. This may require extending the collection period."
-                else:
-                    note = f"Current power is {current_power:.1%}. About {needed_n} samples per group is recommended for 80% power."
-                note = textwrap.fill(note, width=55)
-                fig_curve.text(0.05, 0.035, note, fontsize=8, color='#333333', ha='left', multialignment='left', transform=fig_curve.transFigure)
                 fig_curve.text(0.05, 0.96, header_text, fontsize=9, color='gray', transform=fig_curve.transFigure)
                 fig_curve.text(0.85, 0.02, f"Page 3 of {total_pages}", fontsize=10, color='gray', transform=fig_curve.transFigure)
                 pdf.savefig(fig_curve)
@@ -1112,13 +1111,13 @@ def generate_pdf_report(result, project_name=None):
 
                 # 表格页（第四页）
                 fig_table = plt.figure(figsize=(PAGE_WIDTH_MM/25.4, PAGE_HEIGHT_MM/25.4))
-                fig_table.text(0.5, 0.93, "Figure 3: Descriptive Statistics",
+                fig_table.text(0.5, 0.91, "Figure 3: Descriptive Statistics",
                                fontsize=14, weight='bold', ha='center', transform=fig_table.transFigure)
                 ax_table = fig_table.add_subplot(111)
                 ax_table.axis('off')
                 fig_table.text(0.05, 0.96, header_text, fontsize=9, color='gray', transform=fig_table.transFigure)
                 ax_table.text(0.05, 0.86, f"Project: {proj_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
-                ax_table.text(0.05, 0.79, f"Metric: {proj_name.replace('.csv','').replace('_',' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
+                ax_table.text(0.05, 0.74, f"Metric: {proj_name.replace('.csv','').replace('_',' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
 
                 table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
                                        colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.06, 0.95, 0.68])
@@ -1131,7 +1130,6 @@ def generate_pdf_report(result, project_name=None):
                         cell.set_text_props(weight='bold', color='white', fontsize=13)
                     else:
                         cell.set_facecolor('#f5f5f5' if i % 2 == 0 else 'white')
-                    # 全部居中
 
                 fig_table.text(0.85, 0.02, f"Page 4 of {total_pages}", fontsize=10, color='gray', transform=fig_table.transFigure)
                 pdf.savefig(fig_table)
