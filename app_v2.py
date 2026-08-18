@@ -915,6 +915,7 @@ def generate_pdf_report(result, project_name=None):
                 warnings.append("[!] Low power. Aim for more samples.")
             warnings.append("Note: t‑test assumes approximate normality. For heavily skewed data, consider Mann‑Whitney U.")
             warnings.append("Warning: Repeatedly peeking at results and stopping early inflates false‑positive rate.")
+            # 多重检验提示，加入警告列表，动态排版
             warnings.append("Note: This report evaluates a single metric only. Multiple metrics require multiplicity correction.")
 
             # 在上面最后一行文本的基础上，向下留出0.04空白，动态计算起始位置，杜绝和上方文字重叠
@@ -931,7 +932,6 @@ def generate_pdf_report(result, project_name=None):
             plt.axis('off')
             pdf.savefig(fig1)
             plt.close(fig1)
-
             # ---------- 第二页 ----------
             fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=A4_FIGSIZE_INCHES, gridspec_kw={'hspace': 0.38})
             fig2.text(0.05, 0.97, header_text, fontsize=9, color='gray')
