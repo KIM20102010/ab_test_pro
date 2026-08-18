@@ -1021,13 +1021,13 @@ def generate_pdf_report(result, project_name=None):
                 else:
                     note = f"Power {current_power:.1%}; {needed_n} samples/group recommended."
                 note = split_max_two_lines(note, max_chars=55)
-                fig_combined.text(0.05, 0.08, note, fontsize=7.5, color='#333333', ha='left',
+                fig_combined.text(0.05, 0.045, note, fontsize=7.5, color='#333333', ha='left',
                                   multialignment='left', transform=fig_combined.transFigure)
 
                 # 表格区域：两行文本y差值加大：0.86 /0.79 →0.86 /0.74，拉开行间距
                 ax_table.axis('off')
                 ax_table.text(0.05, 0.86, f"Project: {proj_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
-                ax_table.text(0.05, 0.80, f"Metric: {proj_name.replace('.csv','').replace('_',' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
+                ax_table.text(0.05, 0.79, f"Metric: {proj_name.replace('.csv','').replace('_',' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
 
                 table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
                                        colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.06, 0.95, 0.68])
@@ -1090,7 +1090,7 @@ def generate_pdf_report(result, project_name=None):
                     note = f"Current power is {current_power:.1%}. About {needed_n} samples per group is recommended for 80% power."
                 note = split_max_two_lines(note, max_chars=55)
                 # y上调，远离页码，开启multialignment
-                fig_curve.text(0.05, 0.08, note, fontsize=7.5, color='#333333', ha='left',
+                fig_curve.text(0.05, 0.045, note, fontsize=7.5, color='#333333', ha='left',
                                multialignment='left', transform=fig_curve.transFigure)
 
                 effect_text = f"d = {cohen_d:.2f}"
@@ -1117,7 +1117,7 @@ def generate_pdf_report(result, project_name=None):
                 ax_table.axis('off')
                 fig_table.text(0.05, 0.96, header_text, fontsize=9, color='gray', transform=fig_table.transFigure)
                 ax_table.text(0.05, 0.86, f"Project: {proj_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
-                ax_table.text(0.05, 0.80, f"Metric: {proj_name.replace('.csv','').replace('_',' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
+                ax_table.text(0.05, 0.79, f"Metric: {proj_name.replace('.csv','').replace('_',' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
 
                 table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
                                        colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.06, 0.95, 0.68])
