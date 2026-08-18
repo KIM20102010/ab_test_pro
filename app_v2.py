@@ -919,7 +919,7 @@ def generate_pdf_report(result, project_name=None):
             warnings.append("Note: This report evaluates a single metric only. Multiple metrics require multiplicity correction.")
 
             # 在上面最后一行文本的基础上，向下留出0.04空白，动态计算起始位置，杜绝和上方文字重叠
-            y_pos = y_pos - 0.04
+            y_pos = y_pos - 0.01
 
             for txt in warnings:
                 if y_pos < BOTTOM_MARGIN + 0.02:
@@ -1021,7 +1021,7 @@ def generate_pdf_report(result, project_name=None):
                 else:
                     note = f"Power {current_power:.1%}; {needed_n} samples/group recommended."
                 note = split_max_two_lines(note, max_chars=55)
-                fig_combined.text(0.05, 0.012, note, fontsize=7.5, color='#333333', ha='left',
+                fig_combined.text(0.05, 0.016, note, fontsize=7.5, color='#333333', ha='left',
                                   multialignment='left', transform=fig_combined.transFigure)
 
                 # 表格区域：两行文本y差值加大：0.86 /0.79 →0.86 /0.74，拉开行间距
@@ -1090,7 +1090,7 @@ def generate_pdf_report(result, project_name=None):
                     note = f"Current power is {current_power:.1%}. About {needed_n} samples per group is recommended for 80% power."
                 note = split_max_two_lines(note, max_chars=55)
                 # y上调，远离页码，开启multialignment
-                fig_curve.text(0.05, 0.12, note, fontsize=7.5, color='#333333', ha='left',
+                fig_curve.text(0.05, 0.16, note, fontsize=7.5, color='#333333', ha='left',
                                multialignment='left', transform=fig_curve.transFigure)
 
                 effect_text = f"d = {cohen_d:.2f}"
