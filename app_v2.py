@@ -925,7 +925,7 @@ def generate_pdf_report(result, project_name=None):
                 if y_pos < BOTTOM_MARGIN + 0.02:
                     break
                 plt.text(LEFT_MARGIN, y_pos, txt, fontsize=8, color='#C62828' if '[!]' in txt else 'gray', transform=fig1.transFigure)
-                y_pos -= 0.032
+                y_pos -= 0.026
 
             plt.text(LEFT_MARGIN, BOTTOM_MARGIN - 0.02, "Confidential — for internal use only", fontsize=9, color='gray', transform=fig1.transFigure)
             plt.text(0.85, PAGE_BOTTOM, f"Page 1 of {total_pages}", fontsize=10, color='gray', transform=fig1.transFigure)
@@ -1021,7 +1021,7 @@ def generate_pdf_report(result, project_name=None):
                 else:
                     note = f"Power {current_power:.1%}; {needed_n} samples/group recommended."
                 note = split_max_two_lines(note, max_chars=55)
-                fig_combined.text(0.05, 0.09, note, fontsize=7.5, color='#333333', ha='left',
+                fig_combined.text(0.05, 0.012, note, fontsize=7.5, color='#333333', ha='left',
                                   multialignment='left', transform=fig_combined.transFigure)
 
                 # 表格区域：两行文本y差值加大：0.86 /0.79 →0.86 /0.74，拉开行间距
@@ -1090,7 +1090,7 @@ def generate_pdf_report(result, project_name=None):
                     note = f"Current power is {current_power:.1%}. About {needed_n} samples per group is recommended for 80% power."
                 note = split_max_two_lines(note, max_chars=55)
                 # y上调，远离页码，开启multialignment
-                fig_curve.text(0.05, 0.09, note, fontsize=7.5, color='#333333', ha='left',
+                fig_curve.text(0.05, 0.12, note, fontsize=7.5, color='#333333', ha='left',
                                multialignment='left', transform=fig_curve.transFigure)
 
                 effect_text = f"d = {cohen_d:.2f}"
