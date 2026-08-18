@@ -687,21 +687,26 @@ def display_results(result):
                 key=f"lock_btn_{btn_key}"
             )
             st.caption("💡 Free users can preview all metrics and charts. Upgrade to download PDF reports with your logo.")
-def split_max_two_lines(text, max_chars=55):
+def split_max_two_lines(text, max_chars=62):
     """
-    将文本最多切分成2行，在空格处断开，不丢失内容，不会产出3行及以上。
-    适用于 PDF 底部诊断文字，避免三行挤占页码。
+    将文本最多切分成2行，优先在句号+空格处断开，保持句子完整性。
+    若找不到句号，则在空格处断开。保证最多2行，不丢失内容。
     """
     if len(text) <= max_chars:
         return text
-    # 在 max_chars 往前找最近空格
-    idx = text.rfind(' ', 0, max_chars)
-    if idx == -1:
-        # 如果找不到空格，强行在 max_chars 处截断
-        idx = max_chars
+    # 优先找句号+空格的位置，其次再找普通空格
+    idx_dot = text.rfind('. ', 0, max_chars)
+    idx_space = text.rfind(' ', 0, max_chars)
+
+    if idx_dot > 0:
+        idx = idx_dot + 1  # 保留句号和空格，使第一行以完整句子结束
+    elif idx_space > 0:
+        idx = idx_space
+    else:
+        idx = max_chars  # 找不到空格则强制截断
+
     line1 = text[:idx].strip()
     line2 = text[idx:].strip()
-    # 只切一次，剩余全部放第二行，保证总共就2行
     return f"{line1}\n{line2}"
 
 # ========== PDF生成函数（异常返回None） ==========
