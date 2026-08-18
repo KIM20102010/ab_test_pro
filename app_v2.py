@@ -766,7 +766,7 @@ def generate_pdf_report(result, project_name=None):
             summary_line2 = f"Absolute Δ = {m_t-m_c:.4f}  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
         else:
             if lift > 0:
-                base = f"Observed relative change: +{lift*100:.1f}%  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
+                base = f"Observed relative change: +{lift*100:.1f}%  |  95% CI (absolute): [{ci_low:.4f}, {ci_high:.4f}]"
             elif lift < 0:
                 base = f"Observed relative change: {-lift*100:.1f}% (negative)  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
             else:
@@ -841,7 +841,7 @@ def generate_pdf_report(result, project_name=None):
             total_pages = 4
             use_combined = False
 
-        header_text = f"A/B TEST ANALYSIS REPORT  |  Report ID: {report_id}  |  Confidential"
+        header_text = f"Report ID: {report_id}  |  Confidential"
 
         # ----- 全局边距（归一化坐标） -----
         LEFT_MARGIN = 0.15
@@ -909,20 +909,21 @@ def generate_pdf_report(result, project_name=None):
             plt.text(LEFT_MARGIN, y_pos, "Statistical test: Welch's t‑test (two‑tailed, unequal variance) | Cohen's d uses pooled variance", fontsize=9, color='gray', transform=fig1.transFigure)
             y_pos -= 0.03
 
-            # 警告文本（调整起始位置和间距，避免重叠）
+            # 警告文本（调整起始位置整体上移，避免和页脚拥挤）
             warnings = []
             if not is_powered:
                 warnings.append("⚠️ Low power. Aim for more samples.")
             warnings.append("Note: t‑test assumes approximate normality. For heavily skewed data, consider Mann‑Whitney U.")
             warnings.append("Warning: Repeatedly peeking at results and stopping early inflates false‑positive rate.")
             warnings.append("Note: This report evaluates a single metric only. Multiple metrics require multiplicity correction.")
-            # 起始 y 上移 0.02，间距增大到 0.028
-            y_pos = 0.13  # 原来约为 0.13，现上移
+            
+            # ========= 核心改动：初始y从0.13上调到0.17，整块警告全部向上移动 =========
+            y_pos = 0.17
             for txt in warnings:
                 if y_pos < BOTTOM_MARGIN + 0.02:
                     break
                 plt.text(LEFT_MARGIN, y_pos, txt, fontsize=8, color='#C62828' if '⚠️' in txt else 'gray', transform=fig1.transFigure)
-                y_pos -= 0.032   # 间距增大
+                y_pos -= 0.032   # 行间距保持不变
 
             plt.text(LEFT_MARGIN, BOTTOM_MARGIN, "Confidential — for internal use only", fontsize=9, color='gray', transform=fig1.transFigure)
             plt.text(0.85, PAGE_BOTTOM, f"Page 1 of {total_pages}", fontsize=10, color='gray', transform=fig1.transFigure)
