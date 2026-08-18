@@ -918,14 +918,14 @@ def generate_pdf_report(result, project_name=None):
             warnings.append("Note: This report evaluates a single metric only. Multiple metrics require multiplicity correction.")
             
             # ========= 核心改动：初始y从0.13上调到0.17，整块警告全部向上移动 =========
-            y_pos = 0.17
+            y_pos = 0.19
             for txt in warnings:
                 if y_pos < BOTTOM_MARGIN + 0.02:
                     break
                 plt.text(LEFT_MARGIN, y_pos, txt, fontsize=8, color='#C62828' if '⚠️' in txt else 'gray', transform=fig1.transFigure)
                 y_pos -= 0.032   # 行间距保持不变
 
-            plt.text(LEFT_MARGIN, BOTTOM_MARGIN, "Confidential — for internal use only", fontsize=9, color='gray', transform=fig1.transFigure)
+            plt.text(LEFT_MARGIN, BOTTOM_MARGIN - 0.02, "Confidential — for internal use only", fontsize=9, color='gray', transform=fig1.transFigure)
             plt.text(0.85, PAGE_BOTTOM, f"Page 1 of {total_pages}", fontsize=10, color='gray', transform=fig1.transFigure)
             plt.axis('off')
             pdf.savefig(fig1)
