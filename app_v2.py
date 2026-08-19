@@ -590,6 +590,11 @@ def analyze_single_file(df, filename, project_name=None):
 
 # ========== 结果展示函数 ==========
 def display_results(result):
+    # =========新增判空保护=========
+    if result is None:
+        st.warning("Analysis result is empty. Please re‑run analysis or check your CSV dataset.")
+        return
+
     st.session_state.button_counter += 1
     btn_key = f"btn_{st.session_state.button_counter}"
 
@@ -600,7 +605,7 @@ def display_results(result):
         col2.metric("Treatment Mean", f"{result['m_t']:.3f}", delta=f"{result['m_t'] - result['m_c']:.3f}")
         col3.metric("Effect Size (Cohen's d)", f"{result['cohen_d']:.3f}", delta=result['effect_label'])
         col4, col5, col6 = st.columns(3)
-        col4.metric("P-Value", f"{result['p_val']:.4f}")
+        col4.metric("P‑Value", f"{result['p_val']:.4f}")
         col5.metric("Statistical Power", f"{result['current_power']:.1%}")
         col6.metric("MDE (80% Power)", f"{result['mde']:.3f}")
         st.info(result['verdict'])
@@ -616,6 +621,7 @@ def display_results(result):
         ax.set_title(f"Treatment - Control = {diff:.3f}")
         st.pyplot(fig)
         plt.close(fig)
+
 
     with tab2:
         control_data = result['control_data']
@@ -668,17 +674,23 @@ def display_results(result):
         st.subheader("📄 Report Export")
         if st.session_state.unlocked or st.session_state.user_plan != 'free':
             if st.button("📥 Generate PDF Report", type="primary", key=f"gen_pdf_{btn_key}"):
-                pdf_data, report_id = generate_pdf_report(result, project_name=st.session_state.uploaded_file_name)
-                if pdf_data:
-                    st.download_button(
-                        label="⬇️ Download PDF",
-                        data=pdf_data,
-                        file_name=f"ABTest_{st.session_state.uploaded_file_name.replace('.csv','')}_{report_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf",
-                        mime="application/pdf",
-                        key=f"download_pdf_{btn_key}"
-                    )
-                else:
-                    st.error("PDF generation failed due to invalid data.")
+                try:
+                    pdf_data, report_id = generate_pdf_report(result, project_name=st.session_state.uploaded_file_name)
+                    if pdf_data:
+                        st.download_button(
+                            label="⬇️ Download PDF",
+                            data=pdf_data,
+                            file_name=f"ABTest_{st.session_state.uploaded_file_name.replace('.csv','')}_{report_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf",
+                            mime="application/pdf",
+                            key=f"download_pdf_{btn_key}"
+                        )
+                    else:
+                        st.error("PDF generation failed due to invalid data.")
+                except Exception as e:
+                    import traceback
+                    print(f"[Generate PDF Button Error] {e}")
+                    print(traceback.format_exc())
+                    st.error("❌ PDF generation failed. Please check backend console log for details.")
         else:
             st.button(
                 label="🔒 Upgrade to Unlock PDF Report",
@@ -687,6 +699,7 @@ def display_results(result):
                 key=f"lock_btn_{btn_key}"
             )
             st.caption("💡 Free users can preview all metrics and charts. Upgrade to download PDF reports with your logo.")
+
 def split_max_two_lines(text, max_chars=62):
     """
     将文本最多切分成2行，优先在句号+空格处断开，保持句子完整性。
@@ -1154,7 +1167,9 @@ def generate_pdf_report(result, project_name=None):
         return buffer.getvalue(), report_id
 
     except Exception as e:
+        import traceback
         print(f"PDF generation error: {e}")
+        print(traceback.format_exc())
         return None, None
 
 
@@ -1288,29 +1303,35 @@ elif uploaded_file is not None:
         st.stop()
 
     if st.button("📊 Run Analysis", type="primary"):
-        if st.session_state.user_plan == 'free' and not check_free_quota():
-            st.warning(f"🔒 Free trial limit reached ({FREE_TRIAL_LIMIT} per day). Please upgrade to continue.")
+    if st.session_state.user_plan == 'free' and not check_free_quota():
+        st.warning(f"🔒 Free trial limit reached ({FREE_TRIAL_LIMIT} per day). Please upgrade to continue.")
+        st.stop()
+
+    with st.spinner("🧹 Cleaning data and running analysis..."):
+        df_clean = df[[control_col, treatment_col]].copy().dropna()
+        removed_outliers = 0
+        if st.session_state.remove_outliers:
+            Q1 = df_clean.quantile(0.25)
+            Q3 = df_clean.quantile(0.75)
+            IQR = Q3 - Q1
+            mask = ((df_clean >= (Q1 - 1.5 * IQR)) & (df_clean <= (Q3 + 1.5 * IQR))).all(axis=1)
+            removed_outliers = len(df_clean) - mask.sum()
+            df_clean = df_clean[mask]
+            if removed_outliers > 0:
+                st.info(f"🧹 Removed {removed_outliers} rows with outliers (Listwise Deletion).")
+        control_data = df_clean[control_col].dropna()
+        treatment_data = df_clean[treatment_col].dropna()
+        if len(control_data) < 3 or len(treatment_data) < 3:
+            st.error("❌ Need at least 3 valid samples per group.")
             st.stop()
 
-        with st.spinner("🧹 Cleaning data and running analysis..."):
-            df_clean = df[[control_col, treatment_col]].copy().dropna()
-            removed_outliers = 0
-            if st.session_state.remove_outliers:
-                Q1 = df_clean.quantile(0.25)
-                Q3 = df_clean.quantile(0.75)
-                IQR = Q3 - Q1
-                mask = ((df_clean >= (Q1 - 1.5 * IQR)) & (df_clean <= (Q3 + 1.5 * IQR))).all(axis=1)
-                removed_outliers = len(df_clean) - mask.sum()
-                df_clean = df_clean[mask]
-                if removed_outliers > 0:
-                    st.info(f"🧹 Removed {removed_outliers} rows with outliers (Listwise Deletion).")
-            control_data = df_clean[control_col].dropna()
-            treatment_data = df_clean[treatment_col].dropna()
-            if len(control_data) < 3 or len(treatment_data) < 3:
-                st.error("❌ Need at least 3 valid samples per group.")
-                st.stop()
-
+        # ========== 增加异常捕获，最稳健 ==========
+        try:
             result = perform_statistical_tests(control_data, treatment_data)
+            # 处理函数返回None的情况
+            if result is None:
+                raise ValueError("perform_statistical_tests returned None")
+
             result['control_col'] = control_col
             result['treatment_col'] = treatment_col
             result['control_data'] = control_data
@@ -1324,6 +1345,16 @@ elif uploaded_file is not None:
             st.session_state.analysis_result = result
             st.session_state.analysis_done = True
             st.rerun()
+
+        except Exception as e:
+            import traceback
+            # 后端打印完整堆栈，方便调试
+            print(f"[Analysis Error] {e}")
+            print(traceback.format_exc())
+            st.error("❌ Statistical calculation failed. Check data: avoid groups with all‑identical values, excessive outliers or bad numeric data.")
+            st.session_state.analysis_result = None
+            st.session_state.analysis_done = False
+            st.stop()
 
     if st.session_state.analysis_done and hasattr(st.session_state, 'analysis_result'):
         display_results(st.session_state.analysis_result)
