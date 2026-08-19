@@ -723,19 +723,18 @@ def split_max_two_lines(text, max_chars=62):
     return f"{line1}\n{line2}"
 
 # ========== PDF生成函数（异常返回None） ==========
-def generate_pdf_report(result, project_name=None):
+def generate_pdf_report(result, report_id, project_name=None):
     try:
+        # --- 数据提取与校验 ---
         def to_float(x, field_name):
-            if x is None:
-                raise ValueError(f"Field '{field_name}' is None")
+            if x is None: raise ValueError(f"Field '{field_name}' is None")
             try:
                 val = float(x)
-                if np.isnan(val) or np.isinf(val):
-                    raise ValueError(f"Field '{field_name}' is NaN or Inf")
+                if np.isnan(val) or np.isinf(val): raise ValueError(f"Field '{field_name}' is NaN or Inf")
                 return val
-            except:
-                raise ValueError(f"Field '{field_name}' cannot be converted to float (type: {type(x)})")
+            except: raise ValueError(f"Field '{field_name}' cannot be converted to float")
 
+        # 提取基础指标
         m_c = to_float(result.get('m_c'), 'm_c')
         m_t = to_float(result.get('m_t'), 'm_t')
         s_c = to_float(result.get('s_c'), 's_c')
@@ -746,21 +745,24 @@ def generate_pdf_report(result, project_name=None):
         p_val = to_float(result.get('p_val'), 'p_val')
         ci_low = to_float(result.get('ci_low'), 'ci_low')
         ci_high = to_float(result.get('ci_high'), 'ci_high')
+        
+        # 安全获取可能不存在的字段
         u_p = result.get('u_p')
+        effect_label = result.get('effect_label', 'N/A') # 增加默认值
+        mde_val = result.get('mde', 0.0) # 增加默认值
+        
         removed_outliers = result.get('removed_outliers', 0)
-
         control_data = result.get('control_data')
         treatment_data = result.get('treatment_data')
+
         if control_data is None or treatment_data is None:
             raise ValueError("control_data or treatment_data is missing")
         if len(control_data) < 2 or len(treatment_data) < 2:
             raise ValueError("control_data or treatment_data too short")
 
         buffer = io.BytesIO()
-        st.session_state.report_counter += 1
-        report_id = f"RPT-{datetime.now().strftime('%Y%m%d')}-{st.session_state.report_counter:04d}"
-        st.session_state.last_report_id = report_id
-
+        
+        # --- 逻辑计算 ---
         eps = 1e-9
         if abs(m_c) > eps:
             lift = (m_t - m_c) / m_c
@@ -768,69 +770,45 @@ def generate_pdf_report(result, project_name=None):
         else:
             lift = 0.0
             lift_unreliable = True
-
+            
         is_significant = p_val < 0.05
         is_powered = current_power > 0.8
         ci_crosses_zero = ci_low <= 0 and ci_high >= 0
 
-        # --- 摘要长文本自动换行（宽度从80调整为70） ---
+        # --- 文本生成 ---
         if lift_unreliable:
             summary_base = "Observed absolute difference (relative change unreliable due to near‑zero control mean)"
-            summary_line2 = f"Absolute Δ = {m_t-m_c:.4f}  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
+            summary_line2 = f"Absolute Δ = {m_t-m_c:.4f} | 95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
+            summary_line1 = summary_base
         else:
-            if lift > 0:
-                base = f"Observed relative change: +{lift*100:.1f}%  |  95% CI (absolute): [{ci_low:.4f}, {ci_high:.4f}]"
-            elif lift < 0:
-                base = f"Observed relative change: {-lift*100:.1f}% (negative)  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
-            else:
-                base = f"No difference detected  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
-            if ci_crosses_zero:
-                base += " — CI crosses zero, cannot rule out positive or negative effect"
-            elif is_significant:
-                base += " — statistically significant"
-            else:
-                base += " — not statistically significant"
-            summary_line1 = textwrap.fill(base, width=70)   # 原来是80，改为70
+            if lift > 0: base = f"Observed relative change: +{lift*100:.1f}% | 95% CI (absolute): [{ci_low:.4f}, {ci_high:.4f}]"
+            elif lift < 0: base = f"Observed relative change: {-lift*100:.1f}% (negative) | 95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
+            else: base = f"No difference detected | 95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
+            
+            if ci_crosses_zero: base += " — CI crosses zero, cannot rule out positive or negative effect"
+            elif is_significant: base += " — statistically significant"
+            else: base += " — not statistically significant"
+            
+            summary_line1 = textwrap.fill(base, width=70)
             summary_line2 = f"(p={p_val:.4f}, Power={current_power:.1%})"
 
         # 推荐语
         if is_significant and is_powered:
-            rec_line1 = "[PASS] Rollout to 100% – treatment shows"
-            rec_line2 = "statistically significant and practical significance."
+            rec_line1, rec_line2 = "[PASS] Rollout to 100% – treatment shows", "statistically significant and practical significance."
         elif is_significant and not is_powered:
-            rec_line1 = "[CAUTION] Increase sample size – significant but"
-            rec_line2 = "underpowered, need more data for confident decision."
+            rec_line1, rec_line2 = "[CAUTION] Increase sample size – significant but", "underpowered, need more data for confident decision."
         else:
             if current_power > 0.8:
-                rec_line1 = "[FAIL] No significant difference detected"
-                rec_line2 = "with sufficient power. Consider stopping the test."
+                rec_line1, rec_line2 = "[FAIL] No significant difference detected", "with sufficient power. Consider stopping the test."
             else:
-                rec_line1 = "[INCONCLUSIVE] Insufficient power to detect"
-                rec_line2 = "meaningful difference. Increase sample size or iterate design."
+                rec_line1, rec_line2 = "[INCONCLUSIVE] Insufficient power to detect", "meaningful difference. Increase sample size or iterate design."
 
-        proj_name = project_name or st.session_state.uploaded_file_name or 'Untitled'
-
-        # 描述统计表
-        stats_control = {
-            'N': len(control_data),
-            'Mean': np.mean(control_data),
-            'Median': np.median(control_data),
-            'Std': np.std(control_data),
-            'Q1': np.percentile(control_data, 25),
-            'Q3': np.percentile(control_data, 75),
-            'Min': np.min(control_data),
-            'Max': np.max(control_data)
-        }
-        stats_treatment = {
-            'N': len(treatment_data),
-            'Mean': np.mean(treatment_data),
-            'Median': np.median(treatment_data),
-            'Std': np.std(treatment_data),
-            'Q1': np.percentile(treatment_data, 25),
-            'Q3': np.percentile(treatment_data, 75),
-            'Min': np.min(treatment_data),
-            'Max': np.max(treatment_data)
-        }
+        proj_name = project_name or 'Untitled'
+        
+        # --- 统计表 ---
+        stats_control = { 'N': len(control_data), 'Mean': np.mean(control_data), 'Median': np.median(control_data), 'Std': np.std(control_data), 'Q1': np.percentile(control_data, 25), 'Q3': np.percentile(control_data, 75), 'Min': np.min(control_data), 'Max': np.max(control_data) }
+        stats_treatment = { 'N': len(treatment_data), 'Mean': np.mean(treatment_data), 'Median': np.median(treatment_data), 'Std': np.std(treatment_data), 'Q1': np.percentile(treatment_data, 25), 'Q3': np.percentile(treatment_data, 75), 'Min': np.min(treatment_data), 'Max': np.max(treatment_data) }
+        
         table_data = [
             ['Metric', 'Control', 'Treatment'],
             ['N', f"{stats_control['N']}", f"{stats_treatment['N']}"],
@@ -842,7 +820,6 @@ def generate_pdf_report(result, project_name=None):
             ['Min', f"{stats_control['Min']:.4f}", f"{stats_treatment['Min']:.4f}"],
             ['Max', f"{stats_control['Max']:.4f}", f"{stats_treatment['Max']:.4f}"],
         ]
-
         # 页面布局
         available_height = PAGE_HEIGHT_MM - PAGE_MARGIN_TOP_MM - PAGE_MARGIN_BOTTOM_MM
         n_rows = len(table_data)
@@ -868,21 +845,24 @@ def generate_pdf_report(result, project_name=None):
             fig1 = plt.figure(figsize=A4_FIGSIZE_INCHES)
             fig1.text(0.05, 0.97, header_text, fontsize=9, color='gray')
 
-            if st.session_state.logo_img:
-                try:
-                    orig_width, orig_height = st.session_state.logo_img.size
-                    max_width = 150
-                    max_height = 60
-                    ratio = min(max_width / orig_width, max_height / orig_height, 1.0)
-                    new_width = int(orig_width * ratio)
-                    new_height = int(orig_height * ratio)
-                    logo_resized = st.session_state.logo_img.resize((new_width, new_height), Image.LANCZOS)
-                    img_box = OffsetImage(logo_resized, zoom=1)
-                    ab = AnnotationBbox(img_box, xy=(0.12, 0.945), xycoords='figure fraction',
-                                        box_alignment=(0, 1), frameon=False)
-                    fig1.add_artist(ab)
-                except Exception as e:
-                    print(f"Logo 加载失败: {e}")
+            # logo：注意！本函数已经不再访问 st.session_state.logo_img！
+            # ⚠️重要提醒：logo_img 不能再在这个函数内部读取session！
+            # 👉建议：把logo图片对象也改成入参传进来；如果你暂时不改，先注释掉logo这段，否则函数内部读session依旧有副作用
+            # if st.session_state.logo_img:
+            #     try:
+            #         orig_width, orig_height = st.session_state.logo_img.size
+            #         max_width = 150
+            #         max_height = 60
+            #         ratio = min(max_width / orig_width, max_height / orig_height, 1.0)
+            #         new_width = int(orig_width * ratio)
+            #         new_height = int(orig_height * ratio)
+            #         logo_resized = st.session_state.logo_img.resize((new_width, new_height), Image.LANCZOS)
+            #         img_box = OffsetImage(logo_resized, zoom=1)
+            #         ab = AnnotationBbox(img_box, xy=(0.12, 0.945), xycoords='figure fraction',
+            #                             box_alignment=(0, 1), frameon=False)
+            #         fig1.add_artist(ab)
+            #     except Exception as e:
+            #         print(f"Logo 加载失败: {e}")
 
             plt.text(LEFT_MARGIN, 0.82, "A/B TEST ANALYSIS REPORT", fontsize=20, weight='bold', transform=fig1.transFigure)
             plt.text(LEFT_MARGIN, 0.77, f"Report ID: {report_id}", fontsize=11, color='gray', transform=fig1.transFigure)
@@ -950,7 +930,7 @@ def generate_pdf_report(result, project_name=None):
             fig2.text(0.05, 0.97, header_text, fontsize=9, color='gray')
             # 标题y从0.94下调到0.92，远离顶部页眉，避免未来窜入页眉
             fig2.text(0.5, 0.92, "Figure 1: Distribution Comparison", fontsize=14, weight='bold', ha='center', transform=fig2.transFigure)
-            
+
             bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
             for patch, color in zip(bp['boxes'], ['#2E86AB', '#A23B72']):
                 patch.set_facecolor(color)
@@ -962,14 +942,14 @@ def generate_pdf_report(result, project_name=None):
             ax1.set_ylabel('Value')
             ax1.text(0.02, 0.02, "Box‑plot: center line = median; white dot = sample mean; whiskers = 1.5×IQR",
                      fontsize=7, color='gray', transform=ax1.transAxes)
-            
+
             ax2.hist(control_data, bins=15, alpha=0.5, label='Control', color='#2E86AB', edgecolor='black')
             ax2.hist(treatment_data, bins=15, alpha=0.5, label='Treatment', color='#A23B72', edgecolor='black')
             ax2.legend(fontsize=9)
             ax2.grid(True, alpha=0.3)
             ax2.set_xlabel('Value')
             ax2.set_ylabel('Count')
-            
+
             plt.text(0.85, PAGE_BOTTOM, f"Page 2 of {total_pages}", fontsize=10, color='gray', transform=fig2.transFigure)
             pdf.savefig(fig2)
             plt.close(fig2)
@@ -1164,7 +1144,8 @@ def generate_pdf_report(result, project_name=None):
                 plt.close(fig_table)
 
         buffer.seek(0)
-        return buffer.getvalue(), report_id
+        # 修改返回值：只返回字节流，或者 (字节流, report_id)
+        return buffer.getvalue(), report_id 
 
     except Exception as e:
         import traceback
