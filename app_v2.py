@@ -108,8 +108,6 @@ if "login_blocked_until" not in st.session_state:
     st.session_state.login_blocked_until = None
 if "last_profile_refresh" not in st.session_state:
     st.session_state.last_profile_refresh = 0
-if "button_counter" not in st.session_state:
-    st.session_state.button_counter = 0
 if "first_load" not in st.session_state:
     st.session_state.first_load = True
 if "analysis_result" not in st.session_state:
@@ -204,6 +202,10 @@ def logout():
         supabase.auth.sign_out()
     except Exception:
         pass
+    # 清理 PDF 缓存，避免切换账号后残留旧报告
+    for k in list(st.session_state.keys()):
+        if k.startswith("pdf_cache_"):
+            del st.session_state[k]
     st.session_state.authenticated = False
     st.session_state.user_email = None
     st.session_state.user_plan = 'free'
@@ -578,13 +580,13 @@ def analyze_single_file(df, filename, project_name=None):
     return result
 
 # ========== 结果展示函数 ==========
-def display_results(result):
+def display_results(result, key_prefix="single"):
     if result is None:
         st.warning("Analysis result is empty. Please re‑run analysis or check your CSV dataset.")
         return
 
-    st.session_state.button_counter += 1
-    btn_key = f"btn_{st.session_state.button_counter}"
+    # 修复：使用稳定 key，避免 button_counter 每次渲染自增导致按钮点击事件丢失
+    btn_key = re.sub(r'[^a-zA-Z0-9_]', '_', str(key_prefix))[:50]
 
     # 修复：统一、安全的文件名来源，避免 uploaded_file_name 为 None 导致 .replace() 崩溃
     safe_name = (result.get('project_name')
@@ -666,19 +668,15 @@ def display_results(result):
 
         st.markdown("---")
         st.subheader("📄 Report Export")
+        pdf_cache_key = f"pdf_cache_{btn_key}"
+
         if st.session_state.unlocked or st.session_state.user_plan != 'free':
             if st.button("📥 Generate PDF Report", type="primary", key=f"gen_pdf_{btn_key}"):
                 try:
-                    # 修复：签名已统一为 (result, project_name=None)，不再缺参数
                     pdf_data, report_id = generate_pdf_report(result, project_name=safe_name)
                     if pdf_data:
-                        st.download_button(
-                            label="⬇️ Download PDF",
-                            data=pdf_data,
-                            file_name=f"ABTest_{safe_name}_{report_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf",
-                            mime="application/pdf",
-                            key=f"download_pdf_{btn_key}"
-                        )
+                        # 缓存 PDF，使 Download 按钮在后续渲染中保持可见，避免一闪而过
+                        st.session_state[pdf_cache_key] = (pdf_data, report_id)
                     else:
                         st.error("PDF generation failed due to invalid data.")
                 except Exception as e:
@@ -686,6 +684,16 @@ def display_results(result):
                     print(f"[Generate PDF Button Error] {e}")
                     print(traceback.format_exc())
                     st.error("❌ PDF generation failed. Please check backend console log for details.")
+
+            if pdf_cache_key in st.session_state:
+                pdf_data, report_id = st.session_state[pdf_cache_key]
+                st.download_button(
+                    label="⬇️ Download PDF",
+                    data=pdf_data,
+                    file_name=f"ABTest_{safe_name}_{report_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf",
+                    mime="application/pdf",
+                    key=f"download_pdf_{btn_key}"
+                )
         else:
             st.button(
                 label="🔒 Upgrade to Unlock PDF Report",
@@ -1146,6 +1154,10 @@ st.markdown("**Upload your CSV to automatically compute statistical significance
 if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'founder']:
     st.subheader(f"📂 Batch Processing: {len(st.session_state.batch_files)} files")
     if st.button("🚀 Run Batch Analysis"):
+        # 清除旧 PDF 缓存，避免上一份报告下载按钮残留
+        for k in list(st.session_state.keys()):
+            if k.startswith("pdf_cache_"):
+                del st.session_state[k]
         st.session_state.is_processing = True
         st.session_state.batch_results = {}
         progress_bar = st.progress(0)
@@ -1195,12 +1207,12 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
 
     if st.session_state.analysis_done and st.session_state.batch_results:
         tabs = st.tabs([name for name in st.session_state.batch_results.keys()])
-        for tab, (name, result) in zip(tabs, st.session_state.batch_results.items()):
+        for idx, (tab, (name, result)) in enumerate(zip(tabs, st.session_state.batch_results.items())):
             with tab:
                 if "error" in result:
                     st.error(f"Error: {result['error']}")
                 else:
-                    display_results(result)
+                    display_results(result, key_prefix=f"batch_{idx}_{name}")
         if st.session_state.unlocked or st.session_state.user_plan != 'free':
             valid_pdfs = {name: res['pdf_data'] for name, res in st.session_state.batch_results.items() if "pdf_data" in res}
             if valid_pdfs:
@@ -1268,6 +1280,10 @@ elif uploaded_file is not None:
         st.stop()
 
     if st.button("📊 Run Analysis", type="primary"):
+        # 清除旧 PDF 缓存，避免上一份报告下载按钮残留
+        for k in list(st.session_state.keys()):
+            if k.startswith("pdf_cache_"):
+                del st.session_state[k]
         if st.session_state.user_plan == 'free' and not check_free_quota():
             st.warning(f"🔒 Free trial limit reached ({FREE_TRIAL_LIMIT} per day). Please upgrade to continue.")
             st.stop()
@@ -1321,7 +1337,7 @@ elif uploaded_file is not None:
 
 # ========= 渲染分析结果（不依赖 uploaded_file，rerun 后照样渲染） =========
 if st.session_state.analysis_done and st.session_state.analysis_result is not None:
-    display_results(st.session_state.analysis_result)
+    display_results(st.session_state.analysis_result, key_prefix="single")
 
 elif not uploaded_file and not st.session_state.batch_files:
     st.info("👈 Please upload a CSV file to begin.")
