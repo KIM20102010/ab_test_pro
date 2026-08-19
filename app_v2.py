@@ -972,7 +972,9 @@ def generate_pdf_report(result, project_name=None):
                                   fontsize=14, weight='bold', ha='center', transform=fig_combined.transFigure)
 
                 target_power = 0.8
-                needed_n = find_sample_size_for_power(cohen_d, alpha, target_power, 5000)
+                # ==========修改1：获取真实未截断样本量，上限放开到100000==========
+                raw_needed_n = find_sample_size_for_power(cohen_d, alpha, target_power, 100000)
+                needed_n = raw_needed_n
                 max_x = max(200, needed_n + 50)
                 max_x = min(max_x, 5000)
                 if max_x <= 200:
@@ -995,10 +997,14 @@ def generate_pdf_report(result, project_name=None):
                 ax_curve.text(0.02, 0.82, "Power curve uses observed Cohen's d; with small sample this is subject to sampling noise.",
                               fontsize=7, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
 
-                if needed_n <= max_x:
-                    ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
-                    ax_curve.axvline(needed_n, color='gray', linestyle=':', alpha=0.5)
+                # ==========修改2：判断条件改用raw_needed_n，增加超出范围提示==========
+                if raw_needed_n <= max_x:
+                    ax_curve.plot(raw_needed_n, target_power, 'ro', markersize=8, label=f'80% at N={raw_needed_n}')
+                    ax_curve.axvline(raw_needed_n, color='gray', linestyle=':', alpha=0.5)
                     ax_curve.legend(loc='lower right')
+                else:
+                    ax_curve.text(0.03, 0.12, f"Required N > {max_x}, out of chart range",
+                                  fontsize=8, color='#c0392b', transform=ax_curve.transAxes, ha='left')
 
                 effect_text = f"d = {cohen_d:.2f}"
                 if cohen_d < 0.2:
@@ -1011,15 +1017,15 @@ def generate_pdf_report(result, project_name=None):
                               transform=ax_curve.transAxes, ha='left', va='top',
                               bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
 
-                # 底部诊断文字：y从0.06上调至0.09，远离底部页码；增加multialignment='left'
-                if cohen_d < 0.2 and needed_n > 500:
+                # ==========修改3：业务note全部使用 raw_needed_n，不要用截断后的needed_n ==========
+                if cohen_d < 0.2 and raw_needed_n > 500:
                     note = "Tiny effect → very large sample needed. Consider redesign."
-                    if needed_n > 1000:
+                    if raw_needed_n > 1000:
                         note += " Such sample size is often impractical; consider focusing on a more impactful change."
-                elif needed_n > 200:
-                    note = f"To reach 80% power, need ~{needed_n} samples/group."
+                elif raw_needed_n > 200:
+                    note = f"To reach 80% power, need ~{raw_needed_n} samples/group."
                 else:
-                    note = f"Power {current_power:.1%}; {needed_n} samples/group recommended."
+                    note = f"Power {current_power:.1%}; {raw_needed_n} samples/group recommended."
                 note = split_max_two_lines(note, max_chars=55)
                 fig_combined.text(0.05, 0.04, note, fontsize=7.5, color='#333333', ha='left',
                                   multialignment='left', transform=fig_combined.transFigure)
@@ -1055,7 +1061,9 @@ def generate_pdf_report(result, project_name=None):
                 ax_curve = fig_curve.add_subplot(111)
                 # 绘制曲线（与合并页相同）
                 target_power = 0.8
-                needed_n = find_sample_size_for_power(cohen_d, alpha, target_power, 5000)
+                # ==========修改4：独立曲线页同样获取真实样本量raw_needed_n==========
+                raw_needed_n = find_sample_size_for_power(cohen_d, alpha, target_power, 100000)
+                needed_n = raw_needed_n
                 max_x = max(200, needed_n + 50)
                 max_x = min(max_x, 5000)
                 if max_x <= 200:
@@ -1077,18 +1085,23 @@ def generate_pdf_report(result, project_name=None):
                 ax_curve.text(0.02, 0.82, "Power curve uses observed Cohen's d; with small sample this is subject to sampling noise.",
                               fontsize=7, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
 
-                if needed_n <= max_x:
-                    ax_curve.plot(needed_n, target_power, 'ro', markersize=8, label=f'80% at N={needed_n}')
-                    ax_curve.axvline(needed_n, color='gray', linestyle=':', alpha=0.5)
+                # ==========修改5：独立页判断条件改用raw_needed_n，增加超出范围提示==========
+                if raw_needed_n <= max_x:
+                    ax_curve.plot(raw_needed_n, target_power, 'ro', markersize=8, label=f'80% at N={raw_needed_n}')
+                    ax_curve.axvline(raw_needed_n, color='gray', linestyle=':', alpha=0.5)
                     ax_curve.legend(loc='lower right')
+                else:
+                    ax_curve.text(0.03, 0.12, f"Required N > {max_x}, out of chart range",
+                                  fontsize=8, color='#c0392b', transform=ax_curve.transAxes, ha='left')
 
                 # ----- 诊断文字（分页曲线页） 修复重复赋值bug -----
-                if cohen_d < 0.2 and needed_n > 500:
+                # ==========修改6：独立曲线页note也使用raw_needed_n ==========
+                if cohen_d < 0.2 and raw_needed_n > 500:
                     note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re-evaluating the experiment design."
-                elif needed_n > 200:
-                    note = f"To reach 80% power, you need about {needed_n} samples per group. This may require extending the collection period."
+                elif raw_needed_n > 200:
+                    note = f"To reach 80% power, you need about {raw_needed_n} samples per group. This may require extending the collection period."
                 else:
-                    note = f"Current power is {current_power:.1%}. About {needed_n} samples per group is recommended for 80% power."
+                    note = f"Current power is {current_power:.1%}. About {raw_needed_n} samples per group is recommended for 80% power."
                 note = split_max_two_lines(note, max_chars=55)
                 # y上调，远离页码，开启multialignment
                 fig_curve.text(0.05, 0.04, note, fontsize=7.5, color='#333333', ha='left',
