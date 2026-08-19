@@ -308,7 +308,7 @@ if st.session_state.first_load:
 # ========== 登录/注册界面 ==========
 if not st.session_state.authenticated:
     st.title("📈 A/B Test Pro")
-    st.markdown("### Professional Statistical Analysis for Data-Driven Decisions")
+    st.markdown("### Professional Statistical Analysis for Data‑Driven Decisions")
     with st.form("login_form"):
         email = st.text_input("Email")
         password = st.text_input("Password", type="password")
@@ -1110,7 +1110,7 @@ def generate_pdf_report(result, project_name=None):
                 # ----- 诊断文字（分页曲线页） 修复重复赋值bug -----
                 # ==========修改6：独立曲线页note也使用raw_needed_n ==========
                 if cohen_d < 0.2 and raw_needed_n > 500:
-                    note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re-evaluating the experiment design."
+                    note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re‑evaluating the experiment design."
                 elif raw_needed_n > 200:
                     note = f"To reach 80% power, you need about {raw_needed_n} samples per group. This may require extending the collection period."
                 else:
@@ -1274,7 +1274,7 @@ elif uploaded_file is not None:
         except UnicodeDecodeError:
             df = pd.read_csv(tmp_path, encoding='gbk')
         st.session_state.uploaded_file_name = uploaded_file.name
-        st.session_state.analysis_result = None
+        # 注意：这里不要清空analysis_result，rerun之后要保留结果
     except Exception as e:
         st.error(f"Error reading CSV: {e}")
         if tmp_path and os.path.exists(tmp_path):
@@ -1357,10 +1357,12 @@ elif uploaded_file is not None:
                 st.session_state.analysis_done = False
                 st.stop()
 
-    if st.session_state.analysis_done and hasattr(st.session_state, 'analysis_result'):
-        display_results(st.session_state.analysis_result)
+# =========【修复核心！！把结果渲染移到外面，rerun丢失uploaded_file也照样渲染结果】=========
+# 只要session_state里面有分析结果，就渲染，不再依赖uploaded_file不为None
+if st.session_state.analysis_done and st.session_state.analysis_result is not None:
+    display_results(st.session_state.analysis_result)
 
-else:
+elif not uploaded_file:
     st.info("👈 Please upload a CSV file to begin.")
     with st.expander("📖 CSV Format Example"):
         st.code("""
@@ -1381,3 +1383,4 @@ B,21.8,26.8
 
 st.markdown("---")
 st.caption(f"📌 Uploaded CSV files are processed locally and not stored on our servers. Account data is securely stored. © {datetime.now().year} A/B Test Pro")
+
