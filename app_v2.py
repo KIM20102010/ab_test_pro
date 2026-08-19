@@ -993,9 +993,9 @@ def generate_pdf_report(result, project_name=None):
                 ax_curve.set_ylim(0, 0.85)
                 # 拉开两条note的y间距：0.90 →0.90；0.86→0.82
                 ax_curve.text(0.02, 0.90, "Note: Power curve assumes equal sample sizes per group. Unequal group sizes alter required sample size.",
-                              fontsize=7, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
+                              fontsize=8, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
                 ax_curve.text(0.02, 0.82, "Power curve uses observed Cohen's d; with small sample this is subject to sampling noise.",
-                              fontsize=7, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
+                              fontsize=8, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
 
                 # ==========修改2：判断条件改用raw_needed_n，增加超出范围提示==========
                 if raw_needed_n <= max_x:
@@ -1081,9 +1081,9 @@ def generate_pdf_report(result, project_name=None):
                 ax_curve.tick_params(axis='both', labelsize=9)
                 ax_curve.set_ylim(0, 0.85)
                 ax_curve.text(0.02, 0.90, "Note: Power curve assumes equal sample sizes per group. Unequal group sizes alter required sample size.",
-                              fontsize=7, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
+                              fontsize=8, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
                 ax_curve.text(0.02, 0.82, "Power curve uses observed Cohen's d; with small sample this is subject to sampling noise.",
-                              fontsize=7, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
+                              fontsize=8, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
 
                 # ==========修改5：独立页判断条件改用raw_needed_n，增加超出范围提示==========
                 if raw_needed_n <= max_x:
