@@ -1027,14 +1027,15 @@ def generate_pdf_report(result, project_name=None):
                 # 表格区域：两行文本y差值加大：0.86 /0.79 →0.86 /0.74，拉开行间距
                 ax_table.axis('off')
                 ax_table.text(0.05, 0.92, f"Project: {proj_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
-                ax_table.text(0.05, 0.86, f"Metric: {proj_name.replace('.csv','').replace('_',' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
+                ax_table.text(0.05, 0.84, f"Metric: {proj_name.replace('.csv','').replace('_',' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
 
                 table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
-                                       colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.04, 0.95, 0.68])
+                                       colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.03, 0.95, 0.70])
                 table.auto_set_font_size(False)
                 table.set_fontsize(13)
-                table.scale(1, 1.63)
+                # 删掉 table.scale(1, 1.63)，改用set_height控制行高
                 for (i, j), cell in table.get_celld().items():
+                    cell.set_height(0.078)  # 直接设置行高；数值调大=行更高，不要改fontsize
                     if i == 0:
                         cell.set_facecolor('#1a3b5c')
                         cell.set_text_props(weight='bold', color='white', fontsize=13)
@@ -1117,14 +1118,15 @@ def generate_pdf_report(result, project_name=None):
                 ax_table.axis('off')
                 fig_table.text(0.05, 0.96, header_text, fontsize=9, color='gray', transform=fig_table.transFigure)
                 ax_table.text(0.05, 0.92, f"Project: {proj_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
-                ax_table.text(0.05, 0.86, f"Metric: {proj_name.replace('.csv','').replace('_',' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
+                ax_table.text(0.05, 0.84, f"Metric: {proj_name.replace('.csv','').replace('_',' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
 
                 table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
-                                       colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.04, 0.95, 0.68])
+                                       colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.03, 0.95, 0.70])
                 table.auto_set_font_size(False)
                 table.set_fontsize(13)
-                table.scale(1, 1.63)
+                # 删掉 table.scale(1,1.63)
                 for (i, j), cell in table.get_celld().items():
+                    cell.set_height(0.078)
                     if i == 0:
                         cell.set_facecolor('#1a3b5c')
                         cell.set_text_props(weight='bold', color='white', fontsize=13)
