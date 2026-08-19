@@ -1303,58 +1303,58 @@ elif uploaded_file is not None:
         st.stop()
 
     if st.button("📊 Run Analysis", type="primary"):
-    if st.session_state.user_plan == 'free' and not check_free_quota():
-        st.warning(f"🔒 Free trial limit reached ({FREE_TRIAL_LIMIT} per day). Please upgrade to continue.")
-        st.stop()
-
-    with st.spinner("🧹 Cleaning data and running analysis..."):
-        df_clean = df[[control_col, treatment_col]].copy().dropna()
-        removed_outliers = 0
-        if st.session_state.remove_outliers:
-            Q1 = df_clean.quantile(0.25)
-            Q3 = df_clean.quantile(0.75)
-            IQR = Q3 - Q1
-            mask = ((df_clean >= (Q1 - 1.5 * IQR)) & (df_clean <= (Q3 + 1.5 * IQR))).all(axis=1)
-            removed_outliers = len(df_clean) - mask.sum()
-            df_clean = df_clean[mask]
-            if removed_outliers > 0:
-                st.info(f"🧹 Removed {removed_outliers} rows with outliers (Listwise Deletion).")
-        control_data = df_clean[control_col].dropna()
-        treatment_data = df_clean[treatment_col].dropna()
-        if len(control_data) < 3 or len(treatment_data) < 3:
-            st.error("❌ Need at least 3 valid samples per group.")
+        if st.session_state.user_plan == 'free' and not check_free_quota():
+            st.warning(f"🔒 Free trial limit reached ({FREE_TRIAL_LIMIT} per day). Please upgrade to continue.")
             st.stop()
-
-        # ========== 增加异常捕获，最稳健 ==========
-        try:
-            result = perform_statistical_tests(control_data, treatment_data)
-            # 处理函数返回None的情况
-            if result is None:
-                raise ValueError("perform_statistical_tests returned None")
-
-            result['control_col'] = control_col
-            result['treatment_col'] = treatment_col
-            result['control_data'] = control_data
-            result['treatment_data'] = treatment_data
-            result['df_clean'] = df_clean
-            result['removed_outliers'] = removed_outliers
-
-            if st.session_state.user_plan == 'free':
-                increment_free_usage()
-
-            st.session_state.analysis_result = result
-            st.session_state.analysis_done = True
-            st.rerun()
-
-        except Exception as e:
-            import traceback
-            # 后端打印完整堆栈，方便调试
-            print(f"[Analysis Error] {e}")
-            print(traceback.format_exc())
-            st.error("❌ Statistical calculation failed. Check data: avoid groups with all‑identical values, excessive outliers or bad numeric data.")
-            st.session_state.analysis_result = None
-            st.session_state.analysis_done = False
-            st.stop()
+    
+        with st.spinner("🧹 Cleaning data and running analysis..."):
+            df_clean = df[[control_col, treatment_col]].copy().dropna()
+            removed_outliers = 0
+            if st.session_state.remove_outliers:
+                Q1 = df_clean.quantile(0.25)
+                Q3 = df_clean.quantile(0.75)
+                IQR = Q3 - Q1
+                mask = ((df_clean >= (Q1 - 1.5 * IQR)) & (df_clean <= (Q3 + 1.5 * IQR))).all(axis=1)
+                removed_outliers = len(df_clean) - mask.sum()
+                df_clean = df_clean[mask]
+                if removed_outliers > 0:
+                    st.info(f"🧹 Removed {removed_outliers} rows with outliers (Listwise Deletion).")
+            control_data = df_clean[control_col].dropna()
+            treatment_data = df_clean[treatment_col].dropna()
+            if len(control_data) < 3 or len(treatment_data) < 3:
+                st.error("❌ Need at least 3 valid samples per group.")
+                st.stop()
+    
+            # ========== 增加异常捕获，最稳健 ==========
+            try:
+                result = perform_statistical_tests(control_data, treatment_data)
+                # 处理函数返回None的情况
+                if result is None:
+                    raise ValueError("perform_statistical_tests returned None")
+    
+                result['control_col'] = control_col
+                result['treatment_col'] = treatment_col
+                result['control_data'] = control_data
+                result['treatment_data'] = treatment_data
+                result['df_clean'] = df_clean
+                result['removed_outliers'] = removed_outliers
+    
+                if st.session_state.user_plan == 'free':
+                    increment_free_usage()
+    
+                st.session_state.analysis_result = result
+                st.session_state.analysis_done = True
+                st.rerun()
+    
+            except Exception as e:
+                import traceback
+                # 后端打印完整堆栈，方便调试
+                print(f"[Analysis Error] {e}")
+                print(traceback.format_exc())
+                st.error("❌ Statistical calculation failed. Check data: avoid groups with all‑identical values, excessive outliers or bad numeric data.")
+                st.session_state.analysis_result = None
+                st.session_state.analysis_done = False
+                st.stop()
 
     if st.session_state.analysis_done and hasattr(st.session_state, 'analysis_result'):
         display_results(st.session_state.analysis_result)
