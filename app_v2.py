@@ -1328,27 +1328,28 @@ elif uploaded_file is not None:
             # ========== 增加异常捕获，最稳健 ==========
             try:
                 result = perform_statistical_tests(control_data, treatment_data)
-                # 处理函数返回None的情况
+                print(f"[DEBUG] perform_statistical_tests return result = {result}")
+            
                 if result is None:
                     raise ValueError("perform_statistical_tests returned None")
-    
+            
                 result['control_col'] = control_col
                 result['treatment_col'] = treatment_col
                 result['control_data'] = control_data
                 result['treatment_data'] = treatment_data
                 result['df_clean'] = df_clean
                 result['removed_outliers'] = removed_outliers
-    
+            
                 if st.session_state.user_plan == 'free':
                     increment_free_usage()
-    
+            
                 st.session_state.analysis_result = result
                 st.session_state.analysis_done = True
+                print("[DEBUG] ready to call st.rerun()")
                 st.rerun()
-    
+            
             except Exception as e:
                 import traceback
-                # 后端打印完整堆栈，方便调试
                 print(f"[Analysis Error] {e}")
                 print(traceback.format_exc())
                 st.error("❌ Statistical calculation failed. Check data: avoid groups with all‑identical values, excessive outliers or bad numeric data.")
