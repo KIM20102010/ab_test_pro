@@ -1,22 +1,23 @@
+import matplotlib
+matplotlib.use('Agg')  # 无显示环境（部署/服务器）必须，否则后端报错
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
-from scipy.stats import ttest_ind, anderson, mannwhitneyu, wilcoxon
+from scipy.stats import ttest_ind, anderson, mannwhitneyu
 import io
 import os
 import base64
 from datetime import datetime, timezone
-import matplotlib.backends.backend_pdf as pdf_backend
-from PIL import Image
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+from matplotlib.backends.backend_pdf import PdfPages
+import PIL.Image as Image
 import time
 import textwrap
 from supabase import create_client, Client
 import tempfile
 import hashlib
-from matplotlib.offsetbox import OffsetImage, AnnotationBbox
-from matplotlib.backends.backend_pdf import PdfPages
 import math
 import re
 import zipfile
@@ -26,6 +27,7 @@ plt.rcParams['pdf.fonttype'] = 42
 plt.rcParams['ps.fonttype'] = 42
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['figure.dpi'] = 100
+plt.rcParams['font.family'] = 'DejaVu Sans'
 
 # =========【常量定义】========
 PAGE_WIDTH_MM = 210
@@ -34,13 +36,7 @@ PAGE_MARGIN_TOP_MM = 25
 PAGE_MARGIN_BOTTOM_MM = 25
 CURVE_HEIGHT_MM = 100
 TABLE_ROW_HEIGHT_MM = 5.5
-A4_FIGSIZE_INCHES = (8.5, 11)
-
-# 如果外部未定义，使用默认值
-try:
-    A4_FIGSIZE_INCHES = (PAGE_WIDTH_MM/25.4, PAGE_HEIGHT_MM/25.4)
-except NameError:
-    pass
+A4_FIGSIZE_INCHES = (PAGE_WIDTH_MM / 25.4, PAGE_HEIGHT_MM / 25.4)
 
 # ========= 报告ID计数器 =========
 if "report_counter" not in st.session_state:
@@ -127,11 +123,10 @@ def is_valid_number(x):
         return True
     if isinstance(x, (float, np.floating)):
         return not (math.isnan(x) or math.isinf(x))
-    # 对于其他类型，尝试转换为float
     try:
         val = float(x)
         return not (math.isnan(val) or math.isinf(val))
-    except:
+    except Exception:
         return False
 
 def validate_email(email):
@@ -143,24 +138,19 @@ def sign_up(email, password):
     try:
         resp = supabase.auth.sign_up({"email": email, "password": password})
         if resp.user:
-            time.sleep(0.5)  # 给触发器一点时间
+            time.sleep(0.5)
             return True, "Account created successfully."
-        else:
-            # 如果 resp.user 为空，可能注册失败，尝试获取错误信息
-            error_msg = getattr(resp, 'error', 'Unknown error')
-            return False, f"Registration failed: {error_msg}"
+        error_msg = getattr(resp, 'error', 'Unknown error')
+        return False, f"Registration failed: {error_msg}"
     except Exception as e:
         error_msg = str(e)
-        # 如果是用户已存在，给友好提示
         if "User already registered" in error_msg:
             return False, "Email already registered."
-        # 否则返回具体错误，便于调试
         print(f"Sign up error: {error_msg}")
         return False, f"Registration failed: {error_msg}"
 
 def login(email, password):
     try:
-        # 防爆破（会话级）
         if st.session_state.login_blocked_until and time.time() < st.session_state.login_blocked_until:
             return False, None, "Too many failed attempts. Please wait 5 minutes."
 
@@ -171,16 +161,13 @@ def login(email, password):
 
         resp = supabase.auth.sign_in_with_password({"email": email, "password": password})
         if resp.user:
-            # 登录成功，重置计数
             st.session_state.login_attempts = 0
             st.session_state.login_blocked_until = None
-            # 获取用户业务数据 (profile)
             user_email = resp.user.email
             profile = fetch_user_profile(user_email)
             if profile:
                 return True, profile, None
             else:
-                # 尝试创建 profile（兼容旧数据）
                 try:
                     supabase.table('profiles').insert({
                         'email': user_email,
@@ -195,14 +182,12 @@ def login(email, password):
                     print(f"Profile creation error: {e}")
                 return False, None, "User profile not found. Please contact support."
         else:
-            # 登录失败，累计失败计数
             st.session_state.login_attempts += 1
             if st.session_state.login_attempts >= 5:
                 st.session_state.login_blocked_until = time.time() + 300
             return False, None, "Invalid email or password."
     except Exception as e:
         print(f"Login error: {e}")
-        # 不将网络异常计入失败次数
         return False, None, "Login failed. Please try again."
 
 def fetch_user_profile(email):
@@ -217,7 +202,7 @@ def fetch_user_profile(email):
 def logout():
     try:
         supabase.auth.sign_out()
-    except:
+    except Exception:
         pass
     st.session_state.authenticated = False
     st.session_state.user_email = None
@@ -227,11 +212,10 @@ def logout():
     st.session_state.login_blocked_until = None
     st.rerun()
 
-# ========== 免费配额检查（先读数据库） ==========
+# ========== 免费配额检查 ==========
 def check_free_quota():
     if st.session_state.user_plan != 'free':
         return True
-    # 从数据库读取最新配额
     email = st.session_state.user_email
     try:
         resp = supabase.table('profiles').select('free_usage_count, free_usage_date').eq('email', email).execute()
@@ -240,7 +224,6 @@ def check_free_quota():
             db_date = resp.data[0]['free_usage_date']
             today = datetime.now(timezone.utc).date().isoformat()
             if db_date != today:
-                # 跨天重置
                 supabase.table('profiles').update({
                     'free_usage_count': 0,
                     'free_usage_date': today
@@ -249,12 +232,10 @@ def check_free_quota():
                 st.session_state.free_usage_date = today
                 return True
             else:
-                # 更新session
                 st.session_state.free_usage_count = db_count
                 st.session_state.free_usage_date = db_date
                 return db_count < FREE_TRIAL_LIMIT
         else:
-            # 若无记录，创建
             supabase.table('profiles').insert({
                 'email': email,
                 'plan': 'free',
@@ -266,7 +247,6 @@ def check_free_quota():
             return True
     except Exception as e:
         print(f"Check free quota error: {e}")
-        # 降级使用session值
         today = datetime.now(timezone.utc).date().isoformat()
         if st.session_state.free_usage_date != today:
             st.session_state.free_usage_count = 0
@@ -274,7 +254,6 @@ def check_free_quota():
         return st.session_state.free_usage_count < FREE_TRIAL_LIMIT
 
 def increment_free_usage():
-    """先更新数据库，成功后再改内存"""
     if st.session_state.user_plan != 'free':
         return
     email = st.session_state.user_email
@@ -294,10 +273,7 @@ def refresh_user_profile():
             st.session_state.user_plan = profile.get('plan', 'free')
             st.session_state.free_usage_count = profile.get('free_usage_count', 0)
             st.session_state.free_usage_date = profile.get('free_usage_date')
-            if st.session_state.user_plan != 'free':
-                st.session_state.unlocked = True
-            else:
-                st.session_state.unlocked = False
+            st.session_state.unlocked = (st.session_state.user_plan != 'free')
 
 # ========== 渲染休眠遮罩 ==========
 if st.session_state.first_load:
@@ -334,11 +310,9 @@ if not st.session_state.authenticated:
                     if err and "Email already registered" in err:
                         st.error(err)
                     else:
-                        # 尝试注册
                         reg_ok, reg_msg = sign_up(email, password)
                         if reg_ok:
                             st.success("✅ Account created! You are now logged in.")
-                            # 直接获取 profile，不调用 login（避免失败计数）
                             profile = fetch_user_profile(email)
                             if profile:
                                 st.session_state.authenticated = True
@@ -350,7 +324,6 @@ if not st.session_state.authenticated:
                                     st.session_state.unlocked = True
                                 st.rerun()
                             else:
-                                # 如果 profile 仍未就绪，给用户明确提示
                                 st.error("Account created, but profile not ready. Please try logging in manually.")
                         else:
                             st.error(reg_msg or "Registration failed.")
@@ -365,7 +338,6 @@ with st.sidebar:
     st.markdown("---")
     st.header("⚙️ Controls")
 
-    # 每30秒刷新一次profile
     if st.session_state.authenticated:
         if time.time() - st.session_state.last_profile_refresh > 30:
             refresh_user_profile()
@@ -373,8 +345,11 @@ with st.sidebar:
 
     logo_file = st.file_uploader("Upload Logo (PNG/JPG)", type=['png', 'jpg', 'jpeg'])
     if logo_file:
-        st.session_state.logo_img = Image.open(logo_file)
-        st.image(st.session_state.logo_img, width=150)
+        try:
+            st.session_state.logo_img = Image.open(logo_file)
+            st.image(st.session_state.logo_img, width=150)
+        except Exception as e:
+            st.error(f"Logo load failed: {e}")
 
     uploaded_file = st.file_uploader(
         "Upload CSV",
@@ -397,6 +372,8 @@ with st.sidebar:
                 else:
                     valid_batch.append(f)
             st.session_state.batch_files = valid_batch
+    else:
+        st.session_state.batch_files = []
 
     st.session_state.remove_outliers = st.checkbox(
         "Exclude Outliers (IQR method, Listwise Deletion)",
@@ -458,7 +435,7 @@ with st.sidebar:
         st.info("💡 After payment, please refresh the page to unlock PDF downloads.")
     st.caption("🔒 Uploaded CSV files are processed locally and not stored on our servers. Account data is securely stored in the database.")
 
-# ========== 统计分析核心函数（带参数保护） ==========
+# ========== 统计分析核心函数 ==========
 def calc_power(eff, alpha, n1, n2):
     try:
         if n1 < 2 or n2 < 2:
@@ -469,17 +446,16 @@ def calc_power(eff, alpha, n1, n2):
         ncp = eff * np.sqrt((n1 * n2) / (n1 + n2))
         if np.isnan(ncp) or np.isinf(ncp):
             return 0.0
-        t_crit = stats.t.ppf(1 - alpha/2, df_t)
+        t_crit = stats.t.ppf(1 - alpha / 2, df_t)
         power = 1 - stats.nct.cdf(t_crit, df_t, ncp) + stats.nct.cdf(-t_crit, df_t, ncp)
         return min(max(power, 0), 0.999)
-    except:
+    except Exception:
         return 0.0
 
 def find_sample_size_for_power(effect, alpha, target_power=0.8, max_n=5000):
     if effect == 0 or abs(effect) < 0.001:
         return max_n
-    # 限制最大迭代次数防止死循环
-    for n in range(10, max_n, 5):
+    for n in range(10, max_n, 10):
         power = calc_power(effect, alpha, n, n)
         if power >= target_power:
             return n
@@ -504,7 +480,7 @@ def perform_statistical_tests(control, treatment):
 
     t_stat, p_val = ttest_ind(treatment, control, equal_var=False)
 
-    pooled_std = np.sqrt((s_c**2 + s_t**2) / 2)
+    pooled_std = np.sqrt((s_c ** 2 + s_t ** 2) / 2)
     cohen_d = (m_t - m_c) / pooled_std if pooled_std > 0 else 0.0
 
     if abs(cohen_d) >= 0.8:
@@ -520,8 +496,12 @@ def perform_statistical_tests(control, treatment):
         effect_label = "Negligible Effect"
         effect_color = "⚪"
 
-    u_stat, u_p = mannwhitneyu(treatment, control, alternative='two-sided')
-    # 修复：anderson异常捕获，全部相同数值不会崩溃
+    # 修复：mannwhitneyu 在常量/全相等数据下会抛错，必须捕获，否则整个分析失败
+    try:
+        u_stat, u_p = mannwhitneyu(treatment, control, alternative='two-sided')
+    except Exception:
+        u_stat, u_p = None, None
+
     try:
         ad_c = anderson(control, dist='norm')
     except ValueError:
@@ -534,7 +514,7 @@ def perform_statistical_tests(control, treatment):
     alpha = 0.05
     current_power = calc_power(cohen_d, alpha, n_c, n_t)
 
-    se_diff = np.sqrt(s_c**2/n_c + s_t**2/n_t)
+    se_diff = np.sqrt(s_c ** 2 / n_c + s_t ** 2 / n_t)
     ci_low = (m_t - m_c) - 1.96 * se_diff
     ci_high = (m_t - m_c) + 1.96 * se_diff
 
@@ -575,6 +555,14 @@ def analyze_single_file(df, filename, project_name=None):
     control_col = numeric_cols[0]
     treatment_col = numeric_cols[1]
     df_clean = df[[control_col, treatment_col]].dropna()
+    removed_outliers = 0
+    if st.session_state.remove_outliers:
+        Q1 = df_clean.quantile(0.25)
+        Q3 = df_clean.quantile(0.75)
+        IQR = Q3 - Q1
+        mask = ((df_clean >= (Q1 - 1.5 * IQR)) & (df_clean <= (Q3 + 1.5 * IQR))).all(axis=1)
+        removed_outliers = int(len(df_clean) - mask.sum())
+        df_clean = df_clean[mask]
     if len(df_clean) < 3:
         return {"error": f"File '{filename}' has insufficient data after cleaning."}
     control_data = df_clean[control_col]
@@ -586,17 +574,24 @@ def analyze_single_file(df, filename, project_name=None):
     result['treatment_data'] = treatment_data
     result['df_clean'] = df_clean
     result['project_name'] = project_name or filename
+    result['removed_outliers'] = removed_outliers
     return result
 
 # ========== 结果展示函数 ==========
 def display_results(result):
-    # =========新增判空保护=========
     if result is None:
         st.warning("Analysis result is empty. Please re‑run analysis or check your CSV dataset.")
         return
 
     st.session_state.button_counter += 1
     btn_key = f"btn_{st.session_state.button_counter}"
+
+    # 修复：统一、安全的文件名来源，避免 uploaded_file_name 为 None 导致 .replace() 崩溃
+    safe_name = (result.get('project_name')
+                 or st.session_state.get('uploaded_file_name')
+                 or result.get('control_col')
+                 or 'report')
+    safe_name = str(safe_name).replace('.csv', '').replace('.CSV', '')
 
     tab1, tab2, tab3, tab4 = st.tabs(["📈 Metrics", "📊 Distributions", "⚡ Power", "📋 Data"])
     with tab1:
@@ -612,7 +607,7 @@ def display_results(result):
 
         fig, ax = plt.subplots(figsize=(10, 1.5))
         diff = result['m_t'] - result['m_c']
-        ax.errorbar(0, 0, xerr=1.96 * np.sqrt(result['s_c']**2/result['n_c'] + result['s_t']**2/result['n_t']),
+        ax.errorbar(0, 0, xerr=1.96 * np.sqrt(result['s_c'] ** 2 / result['n_c'] + result['s_t'] ** 2 / result['n_t']),
                     fmt='o', color='navy', capsize=10, markersize=12)
         ax.axvline(0, color='red', linestyle='--', alpha=0.7)
         ax.set_xlim(result['ci_low'] - 0.5, result['ci_high'] + 0.5)
@@ -621,7 +616,6 @@ def display_results(result):
         ax.set_title(f"Treatment - Control = {diff:.3f}")
         st.pyplot(fig)
         plt.close(fig)
-
 
     with tab2:
         control_data = result['control_data']
@@ -664,7 +658,7 @@ def display_results(result):
         col1, col2 = st.columns(2)
         col1.metric("Current Power", f"{result['current_power']:.1%}")
         col2.metric("MDE (80% Power)", f"{result['mde']:.3f}")
-        st.caption(f"To detect effect size d={result['cohen_d']:.2f} with 80% power, aim for ~{int(16 * (1 + 1) / (result['cohen_d']**2))} samples per group.")
+        st.caption(f"To detect effect size d={result['cohen_d']:.2f} with 80% power, aim for ~{int(16 * (1 + 1) / (result['cohen_d'] ** 2))} samples per group.")
 
     with tab4:
         if 'df_clean' in result:
@@ -675,12 +669,13 @@ def display_results(result):
         if st.session_state.unlocked or st.session_state.user_plan != 'free':
             if st.button("📥 Generate PDF Report", type="primary", key=f"gen_pdf_{btn_key}"):
                 try:
-                    pdf_data, report_id = generate_pdf_report(result, project_name=st.session_state.uploaded_file_name)
+                    # 修复：签名已统一为 (result, project_name=None)，不再缺参数
+                    pdf_data, report_id = generate_pdf_report(result, project_name=safe_name)
                     if pdf_data:
                         st.download_button(
                             label="⬇️ Download PDF",
                             data=pdf_data,
-                            file_name=f"ABTest_{st.session_state.uploaded_file_name.replace('.csv','')}_{report_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf",
+                            file_name=f"ABTest_{safe_name}_{report_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf",
                             mime="application/pdf",
                             key=f"download_pdf_{btn_key}"
                         )
@@ -701,40 +696,38 @@ def display_results(result):
             st.caption("💡 Free users can preview all metrics and charts. Upgrade to download PDF reports with your logo.")
 
 def split_max_two_lines(text, max_chars=62):
-    """
-    将文本最多切分成2行，优先在句号+空格处断开，保持句子完整性。
-    若找不到句号，则在空格处断开。保证最多2行，不丢失内容。
-    """
     if len(text) <= max_chars:
         return text
-    # 优先找句号+空格的位置，其次再找普通空格
     idx_dot = text.rfind('. ', 0, max_chars)
     idx_space = text.rfind(' ', 0, max_chars)
 
     if idx_dot > 0:
-        idx = idx_dot + 1  # 保留句号和空格，使第一行以完整句子结束
+        idx = idx_dot + 1
     elif idx_space > 0:
         idx = idx_space
     else:
-        idx = max_chars  # 找不到空格则强制截断
+        idx = max_chars
 
     line1 = text[:idx].strip()
     line2 = text[idx:].strip()
     return f"{line1}\n{line2}"
 
 # ========== PDF生成函数（异常返回None） ==========
-def generate_pdf_report(result, report_id, project_name=None):
+# 修复：签名改为 (result, project_name=None)，report_id 在函数内部生成
+def generate_pdf_report(result, project_name=None):
     try:
         # --- 数据提取与校验 ---
         def to_float(x, field_name):
-            if x is None: raise ValueError(f"Field '{field_name}' is None")
+            if x is None:
+                raise ValueError(f"Field '{field_name}' is None")
             try:
                 val = float(x)
-                if np.isnan(val) or np.isinf(val): raise ValueError(f"Field '{field_name}' is NaN or Inf")
+                if np.isnan(val) or np.isinf(val):
+                    raise ValueError(f"Field '{field_name}' is NaN or Inf")
                 return val
-            except: raise ValueError(f"Field '{field_name}' cannot be converted to float")
+            except Exception:
+                raise ValueError(f"Field '{field_name}' cannot be converted to float")
 
-        # 提取基础指标
         m_c = to_float(result.get('m_c'), 'm_c')
         m_t = to_float(result.get('m_t'), 'm_t')
         s_c = to_float(result.get('s_c'), 's_c')
@@ -745,23 +738,29 @@ def generate_pdf_report(result, report_id, project_name=None):
         p_val = to_float(result.get('p_val'), 'p_val')
         ci_low = to_float(result.get('ci_low'), 'ci_low')
         ci_high = to_float(result.get('ci_high'), 'ci_high')
-        
-        # 安全获取可能不存在的字段
+
         u_p = result.get('u_p')
-        effect_label = result.get('effect_label', 'N/A') # 增加默认值
-        mde_val = result.get('mde', 0.0) # 增加默认值
-        
+        effect_label = result.get('effect_label', 'N/A')
+        mde_val = result.get('mde', 0.0)
+
         removed_outliers = result.get('removed_outliers', 0)
         control_data = result.get('control_data')
         treatment_data = result.get('treatment_data')
 
         if control_data is None or treatment_data is None:
             raise ValueError("control_data or treatment_data is missing")
+        control_data = np.asarray(control_data, dtype=float)
+        treatment_data = np.asarray(treatment_data, dtype=float)
         if len(control_data) < 2 or len(treatment_data) < 2:
             raise ValueError("control_data or treatment_data too short")
 
+        # 内部生成唯一报告ID
+        st.session_state.report_counter += 1
+        report_id = f"RPT-{st.session_state.report_counter:04d}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        header_text = f"Report ID: {report_id}  |  Confidential"
+
         buffer = io.BytesIO()
-        
+
         # --- 逻辑计算 ---
         eps = 1e-9
         if abs(m_c) > eps:
@@ -770,7 +769,7 @@ def generate_pdf_report(result, report_id, project_name=None):
         else:
             lift = 0.0
             lift_unreliable = True
-            
+
         is_significant = p_val < 0.05
         is_powered = current_power > 0.8
         ci_crosses_zero = ci_low <= 0 and ci_high >= 0
@@ -778,21 +777,26 @@ def generate_pdf_report(result, report_id, project_name=None):
         # --- 文本生成 ---
         if lift_unreliable:
             summary_base = "Observed absolute difference (relative change unreliable due to near‑zero control mean)"
-            summary_line2 = f"Absolute Δ = {m_t-m_c:.4f} | 95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
+            summary_line2 = f"Absolute Δ = {m_t - m_c:.4f} | 95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
             summary_line1 = summary_base
         else:
-            if lift > 0: base = f"Observed relative change: +{lift*100:.1f}% | 95% CI (absolute): [{ci_low:.4f}, {ci_high:.4f}]"
-            elif lift < 0: base = f"Observed relative change: {-lift*100:.1f}% (negative) | 95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
-            else: base = f"No difference detected | 95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
-            
-            if ci_crosses_zero: base += " — CI crosses zero, cannot rule out positive or negative effect"
-            elif is_significant: base += " — statistically significant"
-            else: base += " — not statistically significant"
-            
+            if lift > 0:
+                base = f"Observed relative change: +{lift * 100:.1f}% | 95% CI (absolute): [{ci_low:.4f}, {ci_high:.4f}]"
+            elif lift < 0:
+                base = f"Observed relative change: {-lift * 100:.1f}% (negative) | 95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
+            else:
+                base = f"No difference detected | 95% CI: [{ci_low:.4f}, {ci_high:.4f}]"
+
+            if ci_crosses_zero:
+                base += " — CI crosses zero, cannot rule out positive or negative effect"
+            elif is_significant:
+                base += " — statistically significant"
+            else:
+                base += " — not statistically significant"
+
             summary_line1 = textwrap.fill(base, width=70)
             summary_line2 = f"(p={p_val:.4f}, Power={current_power:.1%})"
 
-        # 推荐语
         if is_significant and is_powered:
             rec_line1, rec_line2 = "[PASS] Rollout to 100% – treatment shows", "statistically significant and practical significance."
         elif is_significant and not is_powered:
@@ -804,11 +808,18 @@ def generate_pdf_report(result, report_id, project_name=None):
                 rec_line1, rec_line2 = "[INCONCLUSIVE] Insufficient power to detect", "meaningful difference. Increase sample size or iterate design."
 
         proj_name = project_name or 'Untitled'
-        
-        # --- 统计表 ---
-        stats_control = { 'N': len(control_data), 'Mean': np.mean(control_data), 'Median': np.median(control_data), 'Std': np.std(control_data), 'Q1': np.percentile(control_data, 25), 'Q3': np.percentile(control_data, 75), 'Min': np.min(control_data), 'Max': np.max(control_data) }
-        stats_treatment = { 'N': len(treatment_data), 'Mean': np.mean(treatment_data), 'Median': np.median(treatment_data), 'Std': np.std(treatment_data), 'Q1': np.percentile(treatment_data, 25), 'Q3': np.percentile(treatment_data, 75), 'Min': np.min(treatment_data), 'Max': np.max(treatment_data) }
-        
+
+        stats_control = {
+            'N': len(control_data), 'Mean': np.mean(control_data), 'Median': np.median(control_data),
+            'Std': np.std(control_data), 'Q1': np.percentile(control_data, 25), 'Q3': np.percentile(control_data, 75),
+            'Min': np.min(control_data), 'Max': np.max(control_data)
+        }
+        stats_treatment = {
+            'N': len(treatment_data), 'Mean': np.mean(treatment_data), 'Median': np.median(treatment_data),
+            'Std': np.std(treatment_data), 'Q1': np.percentile(treatment_data, 25), 'Q3': np.percentile(treatment_data, 75),
+            'Min': np.min(treatment_data), 'Max': np.max(treatment_data)
+        }
+
         table_data = [
             ['Metric', 'Control', 'Treatment'],
             ['N', f"{stats_control['N']}", f"{stats_treatment['N']}"],
@@ -820,7 +831,7 @@ def generate_pdf_report(result, report_id, project_name=None):
             ['Min', f"{stats_control['Min']:.4f}", f"{stats_treatment['Min']:.4f}"],
             ['Max', f"{stats_control['Max']:.4f}", f"{stats_treatment['Max']:.4f}"],
         ]
-        # 页面布局
+
         available_height = PAGE_HEIGHT_MM - PAGE_MARGIN_TOP_MM - PAGE_MARGIN_BOTTOM_MM
         n_rows = len(table_data)
         table_height = n_rows * TABLE_ROW_HEIGHT_MM
@@ -831,9 +842,6 @@ def generate_pdf_report(result, report_id, project_name=None):
             total_pages = 4
             use_combined = False
 
-        header_text = f"Report ID: {report_id}  |  Confidential"
-
-        # ----- 全局边距（归一化坐标） -----
         LEFT_MARGIN = 0.15
         RIGHT_MARGIN = 0.85
         TOP_MARGIN = 0.92
@@ -845,24 +853,23 @@ def generate_pdf_report(result, report_id, project_name=None):
             fig1 = plt.figure(figsize=A4_FIGSIZE_INCHES)
             fig1.text(0.05, 0.97, header_text, fontsize=9, color='gray')
 
-            # logo：注意！本函数已经不再访问 st.session_state.logo_img！
-            # ⚠️重要提醒：logo_img 不能再在这个函数内部读取session！
-            # 👉建议：把logo图片对象也改成入参传进来；如果你暂时不改，先注释掉logo这段，否则函数内部读session依旧有副作用
-            # if st.session_state.logo_img:
-            #     try:
-            #         orig_width, orig_height = st.session_state.logo_img.size
-            #         max_width = 150
-            #         max_height = 60
-            #         ratio = min(max_width / orig_width, max_height / orig_height, 1.0)
-            #         new_width = int(orig_width * ratio)
-            #         new_height = int(orig_height * ratio)
-            #         logo_resized = st.session_state.logo_img.resize((new_width, new_height), Image.LANCZOS)
-            #         img_box = OffsetImage(logo_resized, zoom=1)
-            #         ab = AnnotationBbox(img_box, xy=(0.12, 0.945), xycoords='figure fraction',
-            #                             box_alignment=(0, 1), frameon=False)
-            #         fig1.add_artist(ab)
-            #     except Exception as e:
-            #         print(f"Logo 加载失败: {e}")
+            # 修复：安全读取 session 中的 logo 并嵌入（付费功能）
+            logo = st.session_state.get('logo_img')
+            if logo is not None:
+                try:
+                    orig_width, orig_height = logo.size
+                    max_width = 150
+                    max_height = 60
+                    ratio = min(max_width / orig_width, max_height / orig_height, 1.0)
+                    new_width = int(orig_width * ratio)
+                    new_height = int(orig_height * ratio)
+                    logo_resized = logo.resize((new_width, new_height), Image.LANCZOS)
+                    img_box = OffsetImage(logo_resized, zoom=1)
+                    ab = AnnotationBbox(img_box, xy=(0.12, 0.945), xycoords='figure fraction',
+                                        box_alignment=(0, 1), frameon=False)
+                    fig1.add_artist(ab)
+                except Exception as e:
+                    print(f"Logo 加载失败: {e}")
 
             plt.text(LEFT_MARGIN, 0.82, "A/B TEST ANALYSIS REPORT", fontsize=20, weight='bold', transform=fig1.transFigure)
             plt.text(LEFT_MARGIN, 0.77, f"Report ID: {report_id}", fontsize=11, color='gray', transform=fig1.transFigure)
@@ -875,20 +882,18 @@ def generate_pdf_report(result, report_id, project_name=None):
 
             plt.text(LEFT_MARGIN, 0.56, "EXECUTIVE SUMMARY", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
             summary_lines = summary_line1.split('\n')
-            # 🛡️ 截断保护：最多只显示3行，避免极端长文本挤压下方内容
             if len(summary_lines) > 3:
                 summary_lines = summary_lines[:3]
             y_pos = 0.52
             for i, line in enumerate(summary_lines):
-                plt.text(LEFT_MARGIN, y_pos - i*0.035, line, fontsize=12, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
-            # (p=...) 行上移
-            y_pos = 0.52 - (len(summary_lines))*0.035 - 0.00
+                plt.text(LEFT_MARGIN, y_pos - i * 0.035, line, fontsize=12, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
+            y_pos = 0.52 - (len(summary_lines)) * 0.035 - 0.00
             plt.text(LEFT_MARGIN, y_pos, summary_line2, fontsize=11, color='#C62828', transform=fig1.transFigure)
             y_pos -= 0.04
 
             plt.text(LEFT_MARGIN, y_pos, "KEY METRICS", fontsize=15, weight='bold', color='#1a3b5c', transform=fig1.transFigure)
             y_pos -= 0.05
-            plt.text(LEFT_MARGIN, y_pos, f"Difference: {m_t-m_c:.4f}  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]", fontsize=12, transform=fig1.transFigure)
+            plt.text(LEFT_MARGIN, y_pos, f"Difference: {m_t - m_c:.4f}  |  95% CI: [{ci_low:.4f}, {ci_high:.4f}]", fontsize=12, transform=fig1.transFigure)
             y_pos -= 0.04
             plt.text(LEFT_MARGIN, y_pos, f"P‑Value: {p_val:.5f}  |  Cohen's d: {cohen_d:.3f} ({result['effect_label']})", fontsize=12, transform=fig1.transFigure)
             y_pos -= 0.04
@@ -902,16 +907,13 @@ def generate_pdf_report(result, report_id, project_name=None):
             plt.text(LEFT_MARGIN, y_pos, "Statistical test: Welch's t‑test (two‑tailed, unequal variance) | Cohen's d uses pooled variance", fontsize=9, color='gray', transform=fig1.transFigure)
             y_pos -= 0.03
 
-            # 警告文本：继承上面文本的y_pos，向下空0.04的空白，不写死固定y值
             warnings = []
             if not is_powered:
                 warnings.append("[!] Low power. Aim for more samples.")
             warnings.append("Note: t‑test assumes approximate normality. For heavily skewed data, consider Mann‑Whitney U.")
             warnings.append("Warning: Repeatedly peeking at results and stopping early inflates false‑positive rate.")
-            # 多重检验提示，加入警告列表，动态排版
             warnings.append("Note: This report evaluates a single metric only. Multiple metrics require multiplicity correction.")
 
-            # 在上面最后一行文本的基础上，向下留出0.04空白，动态计算起始位置，杜绝和上方文字重叠
             y_pos = y_pos - 0.00
 
             for txt in warnings:
@@ -925,10 +927,10 @@ def generate_pdf_report(result, report_id, project_name=None):
             plt.axis('off')
             pdf.savefig(fig1)
             plt.close(fig1)
+
             # ---------- 第二页 ----------
             fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=A4_FIGSIZE_INCHES, gridspec_kw={'hspace': 0.38})
             fig2.text(0.05, 0.97, header_text, fontsize=9, color='gray')
-            # 标题y从0.94下调到0.92，远离顶部页眉，避免未来窜入页眉
             fig2.text(0.5, 0.92, "Figure 1: Distribution Comparison", fontsize=14, weight='bold', ha='center', transform=fig2.transFigure)
 
             bp = ax1.boxplot([control_data, treatment_data], labels=['Control', 'Treatment'], patch_artist=True)
@@ -936,7 +938,6 @@ def generate_pdf_report(result, report_id, project_name=None):
                 patch.set_facecolor(color)
             ax1.scatter(1, m_c, color='yellow', s=100, zorder=5, label=f"Control Mean: {m_c:.3f}")
             ax1.scatter(2, m_t, color='yellow', s=100, zorder=5, label=f"Treatment Mean: {m_t:.3f}")
-            # 改动：缩小图例字体、缩小内边距，防止图例过大挤压图表
             ax1.legend(loc='upper left', fontsize=9, borderpad=0.5)
             ax1.grid(True, alpha=0.3)
             ax1.set_ylabel('Value')
@@ -957,26 +958,24 @@ def generate_pdf_report(result, report_id, project_name=None):
             # ---------- 第三页 ----------
             if use_combined:
                 fig_combined, (ax_curve, ax_table) = plt.subplots(
-                    2, 1, figsize=(PAGE_WIDTH_MM/25.4, PAGE_HEIGHT_MM/25.4),
+                    2, 1, figsize=(PAGE_WIDTH_MM / 25.4, PAGE_HEIGHT_MM / 25.4),
                     gridspec_kw={'height_ratios': [CURVE_HEIGHT_MM, table_height], 'hspace': 0.3}
                 )
-                # 标题y从0.93下调到0.91，远离顶部页眉
                 fig_combined.text(0.5, 0.91, "Figure 2: Power Curve & Descriptive Statistics",
                                   fontsize=14, weight='bold', ha='center', transform=fig_combined.transFigure)
 
                 target_power = 0.8
-                # ==========修改1：获取真实未截断样本量，上限放开到100000==========
                 raw_needed_n = find_sample_size_for_power(cohen_d, alpha, target_power, 100000)
                 needed_n = raw_needed_n
                 max_x = max(200, needed_n + 50)
                 max_x = min(max_x, 5000)
                 if max_x <= 200:
-                    sample_sizes = np.arange(5, max_x+1, 5)
+                    sample_sizes = np.arange(5, max_x + 1, 5)
                 else:
                     sample_sizes = np.linspace(5, max_x, 100, dtype=int)
                 powers = [calc_power(cohen_d, alpha, n, n) for n in sample_sizes]
                 ax_curve.plot(sample_sizes, powers, 'b-', linewidth=2, label='Power Curve')
-                ax_curve.axhline(target_power, color='red', linestyle='--', alpha=0.7, label='80% Target Power')
+                ax_curve.axhline(target_power, color='red', linestyle='--', alpha=0.7, )
                 ax_curve.set_xlabel("Sample Size (per group)", fontsize=10)
                 ax_curve.set_ylabel("Statistical Power", fontsize=10)
                 ax_curve.set_title(f"Power Curve (alpha={alpha}, d={cohen_d:.2f})", fontsize=11)
@@ -984,13 +983,11 @@ def generate_pdf_report(result, report_id, project_name=None):
                 ax_curve.grid(True, alpha=0.3)
                 ax_curve.tick_params(axis='both', labelsize=9)
                 ax_curve.set_ylim(0, 0.85)
-                # 拉开两条note的y间距：0.90 →0.90；0.86→0.82
                 ax_curve.text(0.02, 0.90, "Note: Power curve assumes equal sample sizes per group. Unequal group sizes alter required sample size.",
                               fontsize=8, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
                 ax_curve.text(0.02, 0.82, "Power curve uses observed Cohen's d; with small sample this is subject to sampling noise.",
                               fontsize=8, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
 
-                # ==========修改2：判断条件改用raw_needed_n，增加超出范围提示==========
                 if raw_needed_n <= max_x:
                     ax_curve.plot(raw_needed_n, target_power, 'ro', markersize=8, label=f'80% at N={raw_needed_n}')
                     ax_curve.axvline(raw_needed_n, color='gray', linestyle=':', alpha=0.5)
@@ -1010,7 +1007,6 @@ def generate_pdf_report(result, report_id, project_name=None):
                               transform=ax_curve.transAxes, ha='left', va='top',
                               bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
 
-                # ==========修改3：业务note全部使用 raw_needed_n，不要用截断后的needed_n ==========
                 if cohen_d < 0.2 and raw_needed_n > 500:
                     note = "Tiny effect → very large sample needed. Consider redesign."
                     if raw_needed_n > 1000:
@@ -1023,18 +1019,16 @@ def generate_pdf_report(result, report_id, project_name=None):
                 fig_combined.text(0.05, 0.04, note, fontsize=7.5, color='#333333', ha='left',
                                   multialignment='left', transform=fig_combined.transFigure)
 
-                # 表格区域：两行文本y差值加大：0.86 /0.79 →0.86 /0.74，拉开行间距
                 ax_table.axis('off')
                 ax_table.text(0.05, 0.92, f"Project: {proj_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
-                ax_table.text(0.05, 0.84, f"Metric: {proj_name.replace('.csv','').replace('_',' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
+                ax_table.text(0.05, 0.84, f"Metric: {proj_name.replace('.csv', '').replace('_', ' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
 
                 table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
                                        colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.03, 0.95, 0.70])
                 table.auto_set_font_size(False)
                 table.set_fontsize(13)
-                # 删掉 table.scale(1, 1.63)，改用set_height控制行高
                 for (i, j), cell in table.get_celld().items():
-                    cell.set_height(0.078)  # 直接设置行高；数值调大=行更高，不要改fontsize
+                    cell.set_height(0.078)
                     if i == 0:
                         cell.set_facecolor('#1a3b5c')
                         cell.set_text_props(weight='bold', color='white', fontsize=13)
@@ -1047,20 +1041,17 @@ def generate_pdf_report(result, report_id, project_name=None):
                 plt.close(fig_combined)
 
             else:
-                # 分页：曲线页（第三页）
-                fig_curve = plt.figure(figsize=(PAGE_WIDTH_MM/25.4, PAGE_HEIGHT_MM/25.4))
+                fig_curve = plt.figure(figsize=(PAGE_WIDTH_MM / 25.4, PAGE_HEIGHT_MM / 25.4))
                 fig_curve.text(0.5, 0.91, "Figure 2: Power Curve",
                                fontsize=14, weight='bold', ha='center', transform=fig_curve.transFigure)
                 ax_curve = fig_curve.add_subplot(111)
-                # 绘制曲线（与合并页相同）
                 target_power = 0.8
-                # ==========修改4：独立曲线页同样获取真实样本量raw_needed_n==========
                 raw_needed_n = find_sample_size_for_power(cohen_d, alpha, target_power, 100000)
                 needed_n = raw_needed_n
                 max_x = max(200, needed_n + 50)
                 max_x = min(max_x, 5000)
                 if max_x <= 200:
-                    sample_sizes = np.arange(5, max_x+1, 5)
+                    sample_sizes = np.arange(5, max_x + 1, 5)
                 else:
                     sample_sizes = np.linspace(5, max_x, 100, dtype=int)
                 powers = [calc_power(cohen_d, alpha, n, n) for n in sample_sizes]
@@ -1078,17 +1069,14 @@ def generate_pdf_report(result, report_id, project_name=None):
                 ax_curve.text(0.02, 0.82, "Power curve uses observed Cohen's d; with small sample this is subject to sampling noise.",
                               fontsize=8, color='gray', transform=ax_curve.transAxes, ha='left', va='top')
 
-                # ==========修改5：独立页判断条件改用raw_needed_n，增加超出范围提示==========
                 if raw_needed_n <= max_x:
                     ax_curve.plot(raw_needed_n, target_power, 'ro', markersize=8, label=f'80% at N={raw_needed_n}')
-                    ax_curve.axvline(raw_needed_n, color='gray', linestyle=':', alpha=0.5)
+                    ax_curve.axvline(0, color='gray', linestyle=':', alpha=0.5)
                     ax_curve.legend(loc='lower right')
                 else:
                     ax_curve.text(0.03, 0.12, f"Required N > {max_x}, out of chart range",
                                   fontsize=8, color='#c0392b', transform=ax_curve.transAxes, ha='left')
 
-                # ----- 诊断文字（分页曲线页） 修复重复赋值bug -----
-                # ==========修改6：独立曲线页note也使用raw_needed_n ==========
                 if cohen_d < 0.2 and raw_needed_n > 500:
                     note = "Given the tiny effect size, extremely large sample size is required to reach 80% power. Consider increasing the treatment intensity or re‑evaluating the experiment design."
                 elif raw_needed_n > 200:
@@ -1096,7 +1084,6 @@ def generate_pdf_report(result, report_id, project_name=None):
                 else:
                     note = f"Current power is {current_power:.1%}. About {raw_needed_n} samples per group is recommended for 80% power."
                 note = split_max_two_lines(note, max_chars=55)
-                # y上调，远离页码，开启multialignment
                 fig_curve.text(0.05, 0.04, note, fontsize=7.5, color='#333333', ha='left',
                                multialignment='left', transform=fig_curve.transFigure)
 
@@ -1116,21 +1103,19 @@ def generate_pdf_report(result, report_id, project_name=None):
                 pdf.savefig(fig_curve)
                 plt.close(fig_curve)
 
-                # 表格页（第四页）
-                fig_table = plt.figure(figsize=(PAGE_WIDTH_MM/25.4, PAGE_HEIGHT_MM/25.4))
+                fig_table = plt.figure(figsize=(PAGE_WIDTH_MM / 25.4, PAGE_HEIGHT_MM / 25.4))
                 fig_table.text(0.5, 0.91, "Figure 3: Descriptive Statistics",
                                fontsize=14, weight='bold', ha='center', transform=fig_table.transFigure)
                 ax_table = fig_table.add_subplot(111)
                 ax_table.axis('off')
                 fig_table.text(0.05, 0.96, header_text, fontsize=9, color='gray', transform=fig_table.transFigure)
                 ax_table.text(0.05, 0.92, f"Project: {proj_name}  |  Report ID: {report_id}", fontsize=10, color='gray', transform=ax_table.transAxes)
-                ax_table.text(0.05, 0.84, f"Metric: {proj_name.replace('.csv','').replace('_',' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
+                ax_table.text(0.05, 0.84, f"Metric: {proj_name.replace('.csv', '').replace('_', ' ').title()}", fontsize=10, color='#333333', transform=ax_table.transAxes)
 
                 table = ax_table.table(cellText=table_data, loc='center', cellLoc='center',
                                        colWidths=[0.25, 0.375, 0.375], bbox=[0.025, 0.03, 0.95, 0.70])
                 table.auto_set_font_size(False)
                 table.set_fontsize(13)
-                # 删掉 table.scale(1,1.63)
                 for (i, j), cell in table.get_celld().items():
                     cell.set_height(0.078)
                     if i == 0:
@@ -1144,8 +1129,7 @@ def generate_pdf_report(result, report_id, project_name=None):
                 plt.close(fig_table)
 
         buffer.seek(0)
-        # 修改返回值：只返回字节流，或者 (字节流, report_id)
-        return buffer.getvalue(), report_id 
+        return buffer.getvalue(), report_id
 
     except Exception as e:
         import traceback
@@ -1169,7 +1153,7 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
         total_files = len(st.session_state.batch_files)
 
         for idx, file in enumerate(st.session_state.batch_files):
-            status_text.text(f"Processing: {file.name} ({idx+1}/{total_files})")
+            status_text.text(f"Processing: {file.name} ({idx + 1}/{total_files})")
             try:
                 try:
                     df = pd.read_csv(file).fillna(np.nan)
@@ -1191,6 +1175,7 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
                     st.error(f"❌ Skipping {file.name}: computed value is invalid (NaN/None), cannot render PDF")
                     st.session_state.batch_results[file.name] = {"error": "invalid computed value"}
                     continue
+                # 修复：签名一致，使用 project_name=file.name
                 pdf_data, report_id = generate_pdf_report(result, project_name=file.name)
                 if not pdf_data:
                     st.error(f"❌ Skipping {file.name}: PDF generation returned empty data.")
@@ -1224,7 +1209,7 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
                     try:
                         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
                             for name, pdf_data in valid_pdfs.items():
-                                pdf_filename = f"ABTest_{name.replace('.csv','')}_{datetime.now().strftime('%Y%m%d')}.pdf"
+                                pdf_filename = f"ABTest_{name.replace('.csv', '')}_{datetime.now().strftime('%Y%m%d')}.pdf"
                                 zf.writestr(pdf_filename, pdf_data)
                         zip_buffer.seek(0)
                         st.download_button(
@@ -1242,7 +1227,7 @@ if st.session_state.batch_files and st.session_state.user_plan in ['starter', 'f
 # 单文件模式
 elif uploaded_file is not None:
     if uploaded_file.size > MAX_FILE_SIZE:
-        st.error(f"❌ File exceeds 5MB limit. Current size: {uploaded_file.size/1024/1024:.1f}MB. Please sample your data.")
+        st.error(f"❌ File exceeds 5MB limit. Current size: {uploaded_file.size / 1024 / 1024:.1f}MB. Please sample your data.")
         st.stop()
 
     tmp_path = None
@@ -1255,7 +1240,6 @@ elif uploaded_file is not None:
         except UnicodeDecodeError:
             df = pd.read_csv(tmp_path, encoding='gbk')
         st.session_state.uploaded_file_name = uploaded_file.name
-        # 注意：这里不要清空analysis_result，rerun之后要保留结果
     except Exception as e:
         st.error(f"Error reading CSV: {e}")
         if tmp_path and os.path.exists(tmp_path):
@@ -1265,7 +1249,7 @@ elif uploaded_file is not None:
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
-            except:
+            except Exception:
                 pass
 
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
@@ -1287,7 +1271,7 @@ elif uploaded_file is not None:
         if st.session_state.user_plan == 'free' and not check_free_quota():
             st.warning(f"🔒 Free trial limit reached ({FREE_TRIAL_LIMIT} per day). Please upgrade to continue.")
             st.stop()
-    
+
         with st.spinner("🧹 Cleaning data and running analysis..."):
             df_clean = df[[control_col, treatment_col]].copy().dropna()
             removed_outliers = 0
@@ -1296,7 +1280,7 @@ elif uploaded_file is not None:
                 Q3 = df_clean.quantile(0.75)
                 IQR = Q3 - Q1
                 mask = ((df_clean >= (Q1 - 1.5 * IQR)) & (df_clean <= (Q3 + 1.5 * IQR))).all(axis=1)
-                removed_outliers = len(df_clean) - mask.sum()
+                removed_outliers = int(len(df_clean) - mask.sum())
                 df_clean = df_clean[mask]
                 if removed_outliers > 0:
                     st.info(f"🧹 Removed {removed_outliers} rows with outliers (Listwise Deletion).")
@@ -1305,30 +1289,27 @@ elif uploaded_file is not None:
             if len(control_data) < 3 or len(treatment_data) < 3:
                 st.error("❌ Need at least 3 valid samples per group.")
                 st.stop()
-    
-            # ========== 增加异常捕获，最稳健 ==========
+
             try:
                 result = perform_statistical_tests(control_data, treatment_data)
-                print(f"[DEBUG] perform_statistical_tests return result = {result}")
-            
+
                 if result is None:
                     raise ValueError("perform_statistical_tests returned None")
-            
+
                 result['control_col'] = control_col
                 result['treatment_col'] = treatment_col
                 result['control_data'] = control_data
                 result['treatment_data'] = treatment_data
                 result['df_clean'] = df_clean
                 result['removed_outliers'] = removed_outliers
-            
+
                 if st.session_state.user_plan == 'free':
                     increment_free_usage()
-            
+
                 st.session_state.analysis_result = result
                 st.session_state.analysis_done = True
-                print("[DEBUG] ready to call st.rerun()")
                 st.rerun()
-            
+
             except Exception as e:
                 import traceback
                 print(f"[Analysis Error] {e}")
@@ -1338,12 +1319,11 @@ elif uploaded_file is not None:
                 st.session_state.analysis_done = False
                 st.stop()
 
-# =========【修复核心！！把结果渲染移到外面，rerun丢失uploaded_file也照样渲染结果】=========
-# 只要session_state里面有分析结果，就渲染，不再依赖uploaded_file不为None
+# ========= 渲染分析结果（不依赖 uploaded_file，rerun 后照样渲染） =========
 if st.session_state.analysis_done and st.session_state.analysis_result is not None:
     display_results(st.session_state.analysis_result)
 
-elif not uploaded_file:
+elif not uploaded_file and not st.session_state.batch_files:
     st.info("👈 Please upload a CSV file to begin.")
     with st.expander("📖 CSV Format Example"):
         st.code("""
